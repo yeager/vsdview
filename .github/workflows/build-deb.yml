@@ -40,6 +40,8 @@ jobs:
           mkdir -p $PKG/usr/lib/python3/dist-packages/vsdview
           mkdir -p $PKG/usr/bin
           mkdir -p $PKG/usr/share/applications
+          mkdir -p $PKG/usr/share/mime/packages
+          mkdir -p $PKG/usr/share/metainfo
           mkdir -p $PKG/DEBIAN
 
           cp vsdview/*.py $PKG/usr/lib/python3/dist-packages/vsdview/
@@ -51,10 +53,10 @@ jobs:
             cp "$mo" $PKG/usr/share/locale/$lang/LC_MESSAGES/
           done
 
-          # Desktop file
-          if [ -f data/vsdview.desktop ]; then
-            cp data/vsdview.desktop $PKG/usr/share/applications/
-          fi
+          # Desktop + MIME + metainfo
+          cp data/org.nylander.vsdview.desktop $PKG/usr/share/applications/
+          cp data/org.nylander.vsdview.mime.xml $PKG/usr/share/mime/packages/
+          cp data/org.nylander.vsdview.metainfo.xml $PKG/usr/share/metainfo/
 
           printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > $PKG/usr/bin/vsdview
           chmod +x $PKG/usr/bin/vsdview

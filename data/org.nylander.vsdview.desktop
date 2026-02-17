@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=VSDView
+Comment=Read-only viewer for Microsoft Visio files
+Exec=vsdview %F
+Icon=org.nylander.vsdview
+Terminal=false
+Type=Application
+Categories=Graphics;Viewer;
+MimeType=application/vnd.visio;application/vnd.ms-visio.drawing.main+xml;application/vnd.ms-visio.stencil.main+xml;application/vnd.ms-visio.template.main+xml;application/vnd.ms-visio.drawing;
+Keywords=visio;vsdx;vsd;vss;diagram;
+StartupNotify=true

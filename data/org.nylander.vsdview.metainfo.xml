@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.nylander.vsdview</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>VSDView</name>
+  <summary>Read-only viewer for Microsoft Visio files</summary>
+  <description>
+    <p>
+      VSDView is a minimal viewer for Microsoft Visio files (.vsdx, .vsd, .vss),
+      built with GTK4 and libadwaita. It uses a built-in .vsdx parser with optional
+      libvisio support for legacy .vsd files.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/yeager/vsdview</url>
+  <url type="bugtracker">https://github.com/yeager/vsdview/issues</url>
+  <developer id="org.nylander">
+    <name>Daniel Nylander</name>
+  </developer>
+  <provides>
+    <binary>vsdview</binary>
+    <mediatype>application/vnd.visio</mediatype>
+    <mediatype>application/vnd.ms-visio.drawing.main+xml</mediatype>
+    <mediatype>application/vnd.ms-visio.stencil.main+xml</mediatype>
+    <mediatype>application/vnd.ms-visio.template.main+xml</mediatype>
+    <mediatype>application/vnd.ms-visio.drawing</mediatype>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>

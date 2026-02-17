@@ -44,6 +44,7 @@ jobs:
           mkdir -p $PKG
           cp -r vsdview $PKG/
           cp -r locale $PKG/ 2>/dev/null || true
+          cp -r data $PKG/
           tar czf ~/rpmbuild/SOURCES/vsdview-$VERSION.tar.gz $PKG
 
           # Write spec
@@ -86,11 +87,20 @@ jobs:
           fi
           printf '#!/usr/bin/env python3\\nfrom vsdview.__main__ import main\\nmain()\\n' > \$RPM_BUILD_ROOT/usr/bin/vsdview
           chmod +x \$RPM_BUILD_ROOT/usr/bin/vsdview
+          mkdir -p \$RPM_BUILD_ROOT/usr/share/applications
+          mkdir -p \$RPM_BUILD_ROOT/usr/share/mime/packages
+          mkdir -p \$RPM_BUILD_ROOT/usr/share/metainfo
+          cp data/org.nylander.vsdview.desktop \$RPM_BUILD_ROOT/usr/share/applications/
+          cp data/org.nylander.vsdview.mime.xml \$RPM_BUILD_ROOT/usr/share/mime/packages/
+          cp data/org.nylander.vsdview.metainfo.xml \$RPM_BUILD_ROOT/usr/share/metainfo/
 
           %files
           /usr/lib/python3/dist-packages/vsdview/
           /usr/bin/vsdview
           /usr/share/locale/
+          /usr/share/applications/org.nylander.vsdview.desktop
+          /usr/share/mime/packages/org.nylander.vsdview.mime.xml
+          /usr/share/metainfo/org.nylander.vsdview.metainfo.xml
           SPECEOF
           sed -i 's/^          //' ~/rpmbuild/SPECS/vsdview.spec
 
