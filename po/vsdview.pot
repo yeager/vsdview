@@ -1,47 +1,47 @@
 # SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR Daniel Nylander
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the vsdview package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: vsdview 0.1.0\n"
+"Project-Id-Version: vsdview 0.1.7\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-17 07:42+0100\n"
+"POT-Creation-Date: 2026-02-17 09:21+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "Language: \n"
 "MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: vsdview/app.py:181
+#: vsdview/app.py:176
+msgid ""
+"Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
+"is not affiliated with or endorsed by Microsoft."
+msgstr ""
+
+#: vsdview/app.py:188
 msgid "not found"
 msgstr ""
 
-#: vsdview/converter.py:38
+#: vsdview/converter.py:241
 msgid ""
-"LibreOffice not found. Install it:\n"
-"  Ubuntu/Debian: sudo apt install libreoffice\n"
-"  Fedora: sudo dnf install libreoffice\n"
-"  macOS: brew install --cask libreoffice"
+"Cannot open .vsd files without libvisio. Install it:\n"
+"  Ubuntu/Debian: sudo apt install libvisio-tools\n"
+"  Fedora: sudo dnf install libvisio-tools\n"
+"  macOS: brew install libvisio"
 msgstr ""
 
-#: vsdview/converter.py:59
-#, python-format
+#: vsdview/converter.py:248
 msgid ""
-"LibreOffice conversion failed:\n"
-"%s"
+"Could not parse the Visio file. The file may be corrupt or unsupported.\n"
+"For best results, install libvisio-tools."
 msgstr ""
 
-#: vsdview/converter.py:88
-msgid ""
-"Conversion produced no SVG output. The file may be corrupt or unsupported."
-msgstr ""
-
-#: vsdview/converter.py:114
+#: vsdview/converter.py:273
 msgid ""
 "Neither rsvg-convert nor cairosvg found. Install one:\n"
 "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
@@ -84,34 +84,22 @@ msgstr ""
 msgid "Visio files"
 msgstr ""
 
-#: vsdview/window.py:145
-msgid "LibreOffice not found"
-msgstr ""
-
-#: vsdview/window.py:146
-msgid "Install LibreOffice to open Visio files."
-msgstr ""
-
 #: vsdview/window.py:149
-msgid "LibreOffice is required but was not found on your system."
-msgstr ""
-
-#: vsdview/window.py:158
 msgid "Conversion failed"
 msgstr ""
 
-#: vsdview/window.py:165
+#: vsdview/window.py:156
 msgid "No SVG output produced."
 msgstr ""
 
-#: vsdview/window.py:216
+#: vsdview/window.py:207
 msgid "No file loaded to export."
 msgstr ""
 
-#: vsdview/window.py:271
+#: vsdview/window.py:262
 msgid "Error"
 msgstr ""
 
-#: vsdview/window.py:274
+#: vsdview/window.py:265
 msgid "OK"
 msgstr ""
