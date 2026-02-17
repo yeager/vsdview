@@ -1,3 +1,3 @@
 """VSDView — A read-only viewer for Microsoft Visio files."""
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"

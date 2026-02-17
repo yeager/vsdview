@@ -37,43 +37,38 @@ jobs:
       - name: Build .rpm
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          python3 -c "
-          import textwrap, os
-          version = os.environ['VERSION']
-          spec = textwrap.dedent(f'''
-              Name:           vsdview
-              Version:        {version}
-              Release:        1%{{?dist}}
-              Summary:        Read-only viewer for Microsoft Visio files
-              License:        GPL-3.0-or-later
-              URL:            https://github.com/yeager/vsdview
-              BuildArch:      noarch
-              Requires:       python3 >= 3.10
-              Requires:       python3-gobject
-              Requires:       gtk4
-              Requires:       libadwaita
-              Requires:       librsvg2
-              Recommends:     libvisio-tools
+          cat > vsdview.spec << SPEC
+          Name:           vsdview
+          Version:        ${VERSION}
+          Release:        1%{?dist}
+          Summary:        Read-only viewer for Microsoft Visio files
+          License:        GPL-3.0-or-later
+          URL:            https://github.com/yeager/vsdview
+          BuildArch:      noarch
+          Requires:       python3 >= 3.10
+          Requires:       python3-gobject
+          Requires:       gtk4
+          Requires:       libadwaita
+          Requires:       librsvg2
+          Recommends:     libvisio-tools
 
-              %description
-              VSDView is a minimal read-only viewer for Microsoft Visio files
-              (.vsdx and .vsd), built with GTK4 and libadwaita. Uses a built-in
-              .vsdx parser with optional libvisio support for legacy .vsd files.
+          %description
+          VSDView is a minimal read-only viewer for Microsoft Visio files
+          (.vsdx and .vsd), built with GTK4 and libadwaita. Uses a built-in
+          .vsdx parser with optional libvisio support for legacy .vsd files.
 
-              %install
-              mkdir -p %{{buildroot}}/usr/lib/python3/dist-packages/vsdview
-              mkdir -p %{{buildroot}}/usr/bin
-              cp vsdview/*.py %{{buildroot}}/usr/lib/python3/dist-packages/vsdview/
-              printf '#!/usr/bin/env python3\\nfrom vsdview.__main__ import main\\nmain()\\n' > %{{buildroot}}/usr/bin/vsdview
-              chmod +x %{{buildroot}}/usr/bin/vsdview
+          %install
+          mkdir -p %{buildroot}/usr/lib/python3/dist-packages/vsdview
+          mkdir -p %{buildroot}/usr/bin
+          cp vsdview/*.py %{buildroot}/usr/lib/python3/dist-packages/vsdview/
+          printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > %{buildroot}/usr/bin/vsdview
+          chmod +x %{buildroot}/usr/bin/vsdview
 
-              %files
-              /usr/lib/python3/dist-packages/vsdview/
-              /usr/bin/vsdview
-          ''').lstrip()
-          with open('vsdview.spec', 'w') as f:
-              f.write(spec)
-          "
+          %files
+          /usr/lib/python3/dist-packages/vsdview/
+          /usr/bin/vsdview
+          SPEC
+          sed -i 's/^          //' vsdview.spec
           rpmbuild -bb vsdview.spec \
             --define "_topdir $(pwd)/rpmbuild" \
             --buildroot "$(pwd)/buildroot"
