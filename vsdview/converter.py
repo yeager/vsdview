@@ -82,6 +82,34 @@ _LINE_PATTERNS = {
 _INCH_TO_PX = 72.0
 
 
+def _lighten_color(hex_color: str, factor: float = 0.7) -> str:
+    """Lighten a hex color by blending towards white.
+
+    factor=0.0 returns original, factor=1.0 returns white.
+    """
+    hex_color = hex_color.strip().lstrip("#")
+    if len(hex_color) != 6:
+        return "#E8E8E8"
+    try:
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+    except ValueError:
+        return "#E8E8E8"
+    r = int(r + (255 - r) * factor)
+    g = int(g + (255 - g) * factor)
+    b = int(b + (255 - b) * factor)
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def _is_black(color: str) -> bool:
+    """Check if a color is black or near-black."""
+    if not color:
+        return False
+    c = color.strip().upper()
+    return c in ("#000000", "#000", "0")
+
+
 def _hsl_to_rgb(h: int, s: int, l: int) -> str:
     """Convert Visio HSL (h=0-255, s=0-255, l=0-255) to #RRGGBB."""
     # Normalize to 0-1 range
@@ -815,9 +843,16 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         # Solid fill
         fill = fill_foregnd or fill_bkgnd or "none"
     elif fill_pat_int >= 2:
-        # Pattern/gradient fill — approximate with background color or
-        # a lighter version of foreground; fall back to light gray
-        fill = fill_bkgnd or fill_foregnd or "#E8E8E8"
+        # Pattern/texture fill — we can't render actual patterns, so approximate.
+        # Use FillBkgnd as the visible base if available and not black.
+        # FillForegnd=0 (black) with pattern > 1 is typically a theme placeholder.
+        if fill_bkgnd and not _is_black(fill_bkgnd):
+            fill = fill_bkgnd
+        elif fill_foregnd and not _is_black(fill_foregnd):
+            fill = _lighten_color(fill_foregnd, 0.7)
+        else:
+            # FillForegnd is black/missing with complex pattern = theme placeholder
+            fill = "none"
     else:
         fill = "none"
 
@@ -852,7 +887,9 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         # Group's local coordinate system uses its own Width x Height
         group_h = h_inch
 
-        # Clip group contents to group bounds
+        # Clip group contents to group bounds.
+        # The clip path is in the group's local (pre-rotation) coordinate space,
+        # so we apply it inside the transform — width/height are pre-rotation dims.
         clip_id = f"clip_{shape['id']}"
         lines.append(
             f'<defs><clipPath id="{clip_id}">'
