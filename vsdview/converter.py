@@ -130,7 +130,7 @@ def _resolve_color(val: str) -> str:
 def _get_dash_array(pattern: int, weight: float) -> str:
     """Get SVG stroke-dasharray for a Visio line pattern."""
     p = _LINE_PATTERNS.get(pattern, "")
-    if not p:
+    if not p or p == "none":
         return ""
     # Scale dash pattern by stroke weight
     scale = max(weight, 0.5)
@@ -583,9 +583,14 @@ def _parse_polyline_formula(formula: str, w: float, h: float) -> list[tuple[floa
 # Shape merging (master inheritance)
 # ---------------------------------------------------------------------------
 
-def _merge_shape_with_master(shape: dict, masters: dict) -> dict:
-    """Merge a shape with its master, local values override master values."""
-    master_id = shape.get("master", "")
+def _merge_shape_with_master(shape: dict, masters: dict,
+                              parent_master_id: str = "") -> dict:
+    """Merge a shape with its master, local values override master values.
+
+    For sub-shapes in groups, parent_master_id is the group's Master ID,
+    and the sub-shape's master_shape references a shape within that master.
+    """
+    master_id = shape.get("master", "") or parent_master_id
     master_shape_id = shape.get("master_shape", "")
 
     if not master_id or master_id not in masters:
@@ -688,9 +693,10 @@ def _compute_transform(shape: dict, page_h: float) -> str:
     return " ".join(parts)
 
 
-def _render_shape_svg(shape: dict, page_h: float, masters: dict) -> list[str]:
+def _render_shape_svg(shape: dict, page_h: float, masters: dict,
+                       parent_master_id: str = "") -> list[str]:
     """Render a single shape as SVG elements. Returns list of SVG strings."""
-    shape = _merge_shape_with_master(shape, masters)
+    shape = _merge_shape_with_master(shape, masters, parent_master_id)
 
     lines = []
 
@@ -751,9 +757,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict) -> list[str]:
     # --- Group shapes ---
     if shape_type == "Group":
         transform = _compute_transform(shape, page_h)
+        group_master_id = shape.get("master", "") or parent_master_id
         lines.append(f'<g transform="{transform}">')
         for sub in shape.get("sub_shapes", []):
-            lines.extend(_render_shape_svg(sub, h_inch, masters))
+            lines.extend(_render_shape_svg(sub, h_inch, masters, group_master_id))
         lines.append('</g>')
         # Also render text for the group
         if shape["text"]:
@@ -924,6 +931,33 @@ def _parse_page_dimensions(page_xml: bytes) -> tuple[float, float]:
                 page_h = _safe_float(v, 11.0)
 
     return page_w, page_h
+
+
+def _parse_all_page_dimensions(zf: zipfile.ZipFile) -> list[tuple[float, float]]:
+    """Parse page dimensions from pages.xml (the index file).
+
+    Returns list of (width_inches, height_inches) per page.
+    Falls back to individual page XML parsing.
+    """
+    dims = []
+    try:
+        pages_xml = zf.read("visio/pages/pages.xml")
+        root = ET.fromstring(pages_xml)
+        for page in root.findall(f"{_VTAG}Page"):
+            pw, ph = 8.5, 11.0
+            page_sheet = page.find(f"{_VTAG}PageSheet")
+            if page_sheet is not None:
+                for cell in page_sheet.findall(f"{_VTAG}Cell"):
+                    n = cell.get("N", "")
+                    v = cell.get("V", "")
+                    if n == "PageWidth":
+                        pw = _safe_float(v, 8.5)
+                    elif n == "PageHeight":
+                        ph = _safe_float(v, 11.0)
+            dims.append((pw, ph))
+    except (KeyError, ET.ParseError):
+        pass
+    return dims
 
 
 # ---------------------------------------------------------------------------
@@ -1140,6 +1174,7 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
     with zipfile.ZipFile(input_path, "r") as zf:
         masters = _parse_master_shapes(zf)
         page_files = _get_page_files(zf)
+        all_dims = _parse_all_page_dimensions(zf)
 
         for i, page_file in enumerate(page_files):
             try:
@@ -1147,7 +1182,11 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
             except (KeyError, zipfile.BadZipFile):
                 continue
 
-            page_w, page_h = _parse_page_dimensions(page_xml)
+            # Prefer dimensions from pages.xml, fall back to page XML
+            if i < len(all_dims):
+                page_w, page_h = all_dims[i]
+            else:
+                page_w, page_h = _parse_page_dimensions(page_xml)
             shapes = _parse_vsdx_shapes(page_xml, masters=masters)
 
             if not shapes:
@@ -1178,6 +1217,7 @@ def get_page_info(input_path: str) -> list[dict]:
             masters = _parse_master_shapes(zf)
             page_names = _parse_vsdx_page_names(zf)
             page_files = _get_page_files(zf)
+            all_dims = _parse_all_page_dimensions(zf)
 
             for i, page_file in enumerate(page_files):
                 try:
@@ -1187,7 +1227,9 @@ def get_page_info(input_path: str) -> list[dict]:
 
                 shapes = _parse_vsdx_shapes(page_xml, masters=masters)
                 name = page_names[i] if i < len(page_names) else f"Page {i + 1}"
-                pages.append({"name": name, "shapes": shapes, "index": i})
+                page_w, page_h = all_dims[i] if i < len(all_dims) else _parse_page_dimensions(page_xml)
+                pages.append({"name": name, "shapes": shapes, "index": i,
+                              "page_w": page_w, "page_h": page_h})
 
     return pages
 
@@ -1287,11 +1329,15 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
         with zipfile.ZipFile(input_path, "r") as zf:
             masters = _parse_master_shapes(zf)
             page_files = _get_page_files(zf)
+            all_dims = _parse_all_page_dimensions(zf)
             if page_index >= len(page_files):
                 return None
 
             page_xml = zf.read(page_files[page_index])
-            page_w, page_h = _parse_page_dimensions(page_xml)
+            if page_index < len(all_dims):
+                page_w, page_h = all_dims[page_index]
+            else:
+                page_w, page_h = _parse_page_dimensions(page_xml)
             shapes = _parse_vsdx_shapes(page_xml, masters=masters)
             if not shapes:
                 return None
