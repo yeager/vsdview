@@ -1363,16 +1363,32 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     # GUARD(color_index) in Visio stencils are theme accent placeholders.
     # Replace magenta (#FF00FF, color 6) with theme accent or sensible default.
+    _default_accent = "#5B9BD5"  # Visio default accent blue
     if "GUARD" in _ff_formula and fill_foregnd == "#FF00FF":
-        fill_foregnd = theme_colors.get("accent1", "#5B9BD5")
+        fill_foregnd = theme_colors.get("accent1", _default_accent)
     if "GUARD" in _fb_formula and fill_bkgnd == "#FF00FF":
-        fill_bkgnd = theme_colors.get("accent1", "#5B9BD5")
+        fill_bkgnd = theme_colors.get("accent1", _default_accent)
+
+    # When THEMEVAL formula resolves to black (color index 0) but we have no
+    # theme colors, the shape likely wants a theme-derived color, not black.
+    # Use Visio's default accent blue as fallback.
+    if _ff_formula and "THEMEVAL" in _ff_formula and _is_black(fill_foregnd):
+        fill_foregnd = theme_colors.get("accent1", _default_accent)
+    if _fb_formula and "THEMEVAL" in _fb_formula and _is_black(fill_bkgnd):
+        fill_bkgnd = theme_colors.get("accent1", _default_accent)
+
+    # GUARD(0) in stencils: color index 0 = black, but in stencil context
+    # this is a theme placeholder. Replace with accent color.
+    if "GUARD" in _ff_formula and _is_black(fill_foregnd):
+        fill_foregnd = theme_colors.get("accent1", _default_accent)
+    if "GUARD" in _fb_formula and _is_black(fill_bkgnd):
+        fill_bkgnd = theme_colors.get("accent1", _default_accent)
 
     # If fill colors are still empty but formulas reference theme, use accent1
     if not fill_foregnd and _ff_formula and ("THEME" in _ff_formula or "GUARD" in _ff_formula):
-        fill_foregnd = theme_colors.get("accent1", "")
+        fill_foregnd = theme_colors.get("accent1", _default_accent)
     if not fill_bkgnd and _fb_formula and ("THEME" in _fb_formula or "GUARD" in _fb_formula):
-        fill_bkgnd = theme_colors.get("accent1", "")
+        fill_bkgnd = theme_colors.get("accent1", _default_accent)
 
     # Handle F="Inh" (inherited from theme) — if value couldn't be resolved,
     # use theme colors as fallback
@@ -1380,8 +1396,12 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         fill_foregnd = theme_colors.get("accent1", "")
     if not fill_bkgnd and _fb_formula == "Inh" and theme_colors:
         fill_bkgnd = theme_colors.get("accent1", "")
-    if line_color == "#333333" and _lc_formula and (_lc_formula == "Inh" or "THEME" in _lc_formula) and theme_colors:
-        line_color = theme_colors.get("dk1", "#333333")
+    if _lc_formula and (_lc_formula == "Inh" or "THEME" in _lc_formula):
+        if theme_colors:
+            line_color = theme_colors.get("dk1", line_color)
+        elif "THEMEVAL" in _lc_formula and _is_black(line_color):
+            # THEMEVAL line color defaulting to black — use dark accent instead
+            line_color = "#1F477D"  # Dark blue, matches Visio default
 
     fill_pattern = _get_cell_val(shape, "FillPattern", "1")
     line_pattern = int(_safe_float(_get_cell_val(shape, "LinePattern", "1")))
@@ -1454,17 +1474,25 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         # Group's local coordinate system uses its own Width x Height
         group_h = h_inch
 
-        # Clip group contents to group bounds.
-        # The clip path is in the group's local (pre-rotation) coordinate space,
-        # so we apply it inside the transform — width/height are pre-rotation dims.
-        clip_id = f"clip_{shape['id']}"
+        # Apply clipping only for large groups (containers/swimlanes),
+        # not for small stencil/icon groups where sub-shapes may extend
+        # slightly beyond the nominal group bounds.
+        use_clip = w_px > 100 and h_px > 100
+        clip_attr = ""
+        if use_clip:
+            clip_id = f"clip_{shape['id']}"
+            # Add small padding (5%) to avoid cutting off edges
+            pad_x = w_px * 0.02
+            pad_y = h_px * 0.02
+            lines.append(
+                f'<defs><clipPath id="{clip_id}">'
+                f'<rect x="{-pad_x:.2f}" y="{-pad_y:.2f}" '
+                f'width="{w_px + 2*pad_x:.2f}" height="{h_px + 2*pad_y:.2f}"/>'
+                f'</clipPath></defs>'
+            )
+            clip_attr = f' clip-path="url(#{clip_id})"'
         lines.append(
-            f'<defs><clipPath id="{clip_id}">'
-            f'<rect x="0" y="0" width="{w_px:.2f}" height="{h_px:.2f}"/>'
-            f'</clipPath></defs>'
-        )
-        lines.append(
-            f'<g transform="{transform}" clip-path="url(#{clip_id})"{shadow_attr}>'
+            f'<g transform="{transform}"{clip_attr}{shadow_attr}>'
         )
         for sub in shape.get("sub_shapes", []):
             lines.extend(_render_shape_svg(
@@ -1611,13 +1639,25 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             )
 
     else:
-        # No geometry, no 1D — fall back to rectangle only if shape has
-        # explicit fill/stroke (not for empty group sub-shapes)
+        # No geometry, no 1D — fall back to outlined rectangle
+        # Use transparent fill with light outline instead of filled black
         if w_px > 0 and h_px > 0 and (fill != "none" or shape.get("text")):
             rx_attr = f' rx="{rounding:.2f}"' if rounding > 0 else ""
+            # For fallback shapes, prefer outlined rectangle over filled
+            fallback_fill = fill if fill != "none" else "none"
+            fallback_stroke = stroke if stroke != "none" else (
+                _resolve_color(_get_cell_val(shape, "LineColor"), theme_colors)
+                or "#CCCCCC"
+            )
+            fallback_style = (
+                f'fill="{fallback_fill}" stroke="{fallback_stroke}" '
+                f'stroke-width="{max(stroke_width, 0.75):.2f}"'
+            )
+            if dash_array:
+                fallback_style += f' stroke-dasharray="{dash_array}"'
             lines.append(
                 f'<rect x="0" y="0" width="{w_px:.2f}" height="{h_px:.2f}" '
-                f'{style_str}{rx_attr} transform="{transform}"/>'
+                f'{fallback_style}{rx_attr} transform="{transform}"/>'
             )
 
     # --- Embedded image rendering ---
@@ -1724,7 +1764,12 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     txt_rotate = ""
     if abs(txt_angle) > 1e-6:
         txt_angle_deg = -math.degrees(txt_angle)
+        # For -90° rotation (swimlane labels), adjust position to prevent clipping
+        # Rotate around the text anchor point
         txt_rotate = f' transform="rotate({txt_angle_deg:.1f},{tx:.2f},{ty:.2f})"'
+        # Shift text inward for vertical labels to prevent left-edge clipping
+        if abs(txt_angle_deg - 90) < 5 or abs(txt_angle_deg + 90) < 5:
+            tx += font_size * 0.5
 
     # Bullet support
     bullet = int(_safe_float(para_fmt.get("Bullet", "0")))
@@ -1838,6 +1883,46 @@ def _append_name_label(lines: list, shape: dict, page_h: float,
 # Page dimension parsing
 # ---------------------------------------------------------------------------
 
+def _unit_to_inches(val: float, unit: str) -> float:
+    """Convert a value in the given unit to inches."""
+    u = unit.upper().strip()
+    if u in ("FT", "F_I"):
+        return val * 12.0
+    elif u == "CM":
+        return val / 2.54
+    elif u == "MM":
+        return val / 25.4
+    elif u == "M":
+        return val * 39.3701
+    # IN, IN_F, or unknown → assume inches
+    return val
+
+
+def _normalize_page_dims(page_w: float, page_h: float,
+                         units: dict[str, str] | None = None,
+                         page_scale: float = 0.0, page_scale_u: str = "",
+                         draw_scale: float = 0.0, draw_scale_u: str = "",
+                         ) -> tuple[float, float]:
+    """Normalize page dimensions to inches (in drawing coordinate space).
+
+    When PageScale and DrawingScale are present, the page dimensions are
+    in drawing units. Shapes are also in drawing units, so we keep them
+    consistent but ensure the pixel size is reasonable.
+
+    For scaled drawings (e.g., floorplans), the page might be 1728 FT wide
+    but the drawing scale means shapes are positioned in those coordinates.
+    We keep the coordinate space but cap the SVG pixel size.
+    """
+    # Convert page dimensions to inches
+    if units:
+        pw_u = units.get("PageWidth", "IN")
+        ph_u = units.get("PageHeight", "IN")
+        page_w = _unit_to_inches(page_w, pw_u)
+        page_h = _unit_to_inches(page_h, ph_u)
+
+    return page_w, page_h
+
+
 def _parse_page_dimensions(page_xml: bytes) -> tuple[float, float]:
     """Extract page width and height from a page XML.
 
@@ -1850,6 +1935,9 @@ def _parse_page_dimensions(page_xml: bytes) -> tuple[float, float]:
 
     page_w = 8.5
     page_h = 11.0
+    units: dict[str, str] = {}
+    page_scale = draw_scale = 0.0
+    page_scale_u = draw_scale_u = ""
 
     # Look for PageSheet
     page_sheet = root.find(f"{_VTAG}PageSheet")
@@ -1857,12 +1945,25 @@ def _parse_page_dimensions(page_xml: bytes) -> tuple[float, float]:
         for cell in page_sheet.findall(f"{_VTAG}Cell"):
             n = cell.get("N", "")
             v = cell.get("V", "")
+            u = cell.get("U", "")
             if n == "PageWidth":
                 page_w = _safe_float(v, 8.5)
+                if u:
+                    units["PageWidth"] = u
             elif n == "PageHeight":
                 page_h = _safe_float(v, 11.0)
+                if u:
+                    units["PageHeight"] = u
+            elif n == "PageScale":
+                page_scale = _safe_float(v)
+                page_scale_u = u
+            elif n == "DrawingScale":
+                draw_scale = _safe_float(v)
+                draw_scale_u = u
 
-    return page_w, page_h
+    return _normalize_page_dims(page_w, page_h, units,
+                                page_scale, page_scale_u,
+                                draw_scale, draw_scale_u)
 
 
 def _parse_all_page_dimensions(zf: zipfile.ZipFile) -> list[tuple[float, float]]:
@@ -1877,16 +1978,32 @@ def _parse_all_page_dimensions(zf: zipfile.ZipFile) -> list[tuple[float, float]]
         root = ET.fromstring(pages_xml)
         for page in root.findall(f"{_VTAG}Page"):
             pw, ph = 8.5, 11.0
+            units: dict[str, str] = {}
+            page_scale = draw_scale = 0.0
+            page_scale_u = draw_scale_u = ""
             page_sheet = page.find(f"{_VTAG}PageSheet")
             if page_sheet is not None:
                 for cell in page_sheet.findall(f"{_VTAG}Cell"):
                     n = cell.get("N", "")
                     v = cell.get("V", "")
+                    u = cell.get("U", "")
                     if n == "PageWidth":
                         pw = _safe_float(v, 8.5)
+                        if u:
+                            units["PageWidth"] = u
                     elif n == "PageHeight":
                         ph = _safe_float(v, 11.0)
-            dims.append((pw, ph))
+                        if u:
+                            units["PageHeight"] = u
+                    elif n == "PageScale":
+                        page_scale = _safe_float(v)
+                        page_scale_u = u
+                    elif n == "DrawingScale":
+                        draw_scale = _safe_float(v)
+                        draw_scale_u = u
+            dims.append(_normalize_page_dims(pw, ph, units,
+                                             page_scale, page_scale_u,
+                                             draw_scale, draw_scale_u))
     except (KeyError, ET.ParseError):
         pass
     return dims
@@ -2048,13 +2165,55 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
     page_w_px = page_w * _INCH_TO_PX
     page_h_px = page_h * _INCH_TO_PX
 
+    # For very large pages (scaled drawings like floorplans),
+    # compute the bounding box of all shapes and use that as the viewBox
+    # to avoid massive empty SVG canvases.
+    vb_x, vb_y = 0.0, 0.0
+    vb_w, vb_h = page_w_px, page_h_px
+    max_svg_px = 4000.0
+
+    if max(page_w_px, page_h_px) > max_svg_px:
+        # Compute shape bounding box
+        all_shapes = list(shapes)
+        if bg_shapes:
+            all_shapes.extend(bg_shapes)
+        if all_shapes:
+            min_x = min_y = float('inf')
+            max_x = max_y = float('-inf')
+            for s in all_shapes:
+                px = _safe_float(s.get("cells", {}).get("PinX", {}).get("V")) * _INCH_TO_PX
+                py = (page_h - _safe_float(s.get("cells", {}).get("PinY", {}).get("V"))) * _INCH_TO_PX
+                sw = abs(_safe_float(s.get("cells", {}).get("Width", {}).get("V"))) * _INCH_TO_PX
+                sh = abs(_safe_float(s.get("cells", {}).get("Height", {}).get("V"))) * _INCH_TO_PX
+                if px > 0 or py > 0:
+                    min_x = min(min_x, px - sw / 2)
+                    min_y = min(min_y, py - sh / 2)
+                    max_x = max(max_x, px + sw / 2)
+                    max_y = max(max_y, py + sh / 2)
+            if min_x < float('inf'):
+                # Add 5% padding
+                pad_x = (max_x - min_x) * 0.05
+                pad_y = (max_y - min_y) * 0.05
+                vb_x = max(0, min_x - pad_x)
+                vb_y = max(0, min_y - pad_y)
+                vb_w = min(page_w_px, max_x - min_x + 2 * pad_x)
+                vb_h = min(page_h_px, max_y - min_y + 2 * pad_y)
+
+    # Cap display pixel size
+    display_w = vb_w
+    display_h = vb_h
+    if max(vb_w, vb_h) > max_svg_px:
+        scale = max_svg_px / max(vb_w, vb_h)
+        display_w = vb_w * scale
+        display_h = vb_h * scale
+
     svg_lines = [
         f'<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'xmlns:xlink="http://www.w3.org/1999/xlink" '
-        f'width="{page_w_px:.0f}" height="{page_h_px:.0f}" '
-        f'viewBox="0 0 {page_w_px:.0f} {page_h_px:.0f}">',
-        f'<rect width="100%" height="100%" fill="white"/>',
+        f'width="{display_w:.0f}" height="{display_h:.0f}" '
+        f'viewBox="{vb_x:.0f} {vb_y:.0f} {vb_w:.0f} {vb_h:.0f}">',
+        f'<rect x="{vb_x:.0f}" y="{vb_y:.0f}" width="{vb_w:.0f}" height="{vb_h:.0f}" fill="white"/>',
     ]
 
     if masters is None:
