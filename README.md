@@ -2,25 +2,39 @@
 
 A minimal read-only viewer for Microsoft Visio files (.vsdx/.vsd), built with GTK4 and libadwaita.
 
+![VSDView Screenshot](screenshots/vsdview-screenshot.png)
+
 ## Requirements
 
 - Python 3.10+
 - GTK4, libadwaita, librsvg (GObject Introspection)
-- LibreOffice (for headless conversion of Visio → SVG)
+- Optional: libvisio (`vsd2xhtml`) for legacy .vsd files
 
 ## Installation
 
-### From .deb (Ubuntu/Debian)
+### macOS (Homebrew)
 
 ```bash
-sudo dpkg -i vsdview_0.1.0-1_all.deb
-sudo apt-get install -f
+brew tap yeager/tap
+brew install vsdview
 ```
 
-### From .rpm (Fedora)
+### Ubuntu/Debian
 
 ```bash
-sudo dnf install vsdview-0.1.0-1.noarch.rpm
+# Add repository (one-time setup)
+curl -s https://yeager.github.io/debian-repo/yeager.gpg | sudo tee /usr/share/keyrings/yeager.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/yeager.gpg] https://yeager.github.io/debian-repo stable main" | sudo tee /etc/apt/sources.list.d/yeager.list
+sudo apt update
+
+# Install
+sudo apt install vsdview
+```
+
+### Fedora/RPM
+
+```bash
+sudo dnf install vsdview-0.1.7-1.noarch.rpm
 ```
 
 ### From source
@@ -52,6 +66,8 @@ You can also drag and drop .vsdx/.vsd files onto the window.
 
 ## Features
 
+- Built-in .vsdx parser (no heavy dependencies)
+- Optional libvisio support for legacy .vsd files
 - SVG rendering via librsvg + Cairo
 - Zoom (keyboard, Ctrl+scroll wheel)
 - Light/dark theme toggle
