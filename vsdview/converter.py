@@ -224,6 +224,8 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
         "char_formats": {},
         "para_formats": {},
         "sub_shapes": [],
+        "controls": {},      # Row_N -> {X, Y, ...}
+        "connections": {},    # IX -> {X, Y, ...}
     }
 
     # Parse top-level cells
@@ -241,6 +243,22 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
             geo = _parse_geometry_section(section)
             if geo:
                 sd["geometry"].append(geo)
+
+        elif sec_name == "Controls":
+            for row in section.findall(f"{_VTAG}Row"):
+                row_ix = row.get("IX", "0")
+                ctrl = {}
+                for cell in row.findall(f"{_VTAG}Cell"):
+                    ctrl[cell.get("N", "")] = cell.get("V", "")
+                sd["controls"][f"Row_{row_ix}"] = ctrl
+
+        elif sec_name == "Connection":
+            for row in section.findall(f"{_VTAG}Row"):
+                row_ix = row.get("IX", "0")
+                conn = {}
+                for cell in row.findall(f"{_VTAG}Cell"):
+                    conn[cell.get("N", "")] = cell.get("V", "")
+                sd["connections"][row_ix] = conn
 
         elif sec_name == "Character":
             for row in section.findall(f"{_VTAG}Row"):
@@ -632,6 +650,12 @@ def _merge_shape_with_master(shape: dict, masters: dict,
     if not shape["para_formats"] and master_sd.get("para_formats"):
         shape["para_formats"] = master_sd["para_formats"]
 
+    # Merge controls and connections
+    if not shape.get("controls") and master_sd.get("controls"):
+        shape["controls"] = master_sd["controls"]
+    if not shape.get("connections") and master_sd.get("connections"):
+        shape["connections"] = master_sd["connections"]
+
     return shape
 
 
@@ -964,6 +988,114 @@ def _parse_all_page_dimensions(zf: zipfile.ZipFile) -> list[tuple[float, float]]
 # Main parser and SVG generation
 # ---------------------------------------------------------------------------
 
+def _parse_connects(page_xml_root: ET.Element) -> list[dict]:
+    """Parse <Connect> elements from a page XML root."""
+    connects = []
+    connects_el = page_xml_root.find(f"{_VTAG}Connects")
+    if connects_el is None:
+        return connects
+    for c in connects_el.findall(f"{_VTAG}Connect"):
+        connects.append({
+            "from_sheet": c.get("FromSheet", ""),
+            "from_cell": c.get("FromCell", ""),
+            "to_sheet": c.get("ToSheet", ""),
+            "to_cell": c.get("ToCell", ""),
+        })
+    return connects
+
+
+def _build_shape_index(shapes: list[dict]) -> dict[str, dict]:
+    """Build a flat index of shape ID -> shape dict, including sub-shapes."""
+    idx = {}
+    for s in shapes:
+        idx[s["id"]] = s
+        for sub in s.get("sub_shapes", []):
+            idx[sub["id"]] = sub
+            # Also index deeper sub-shapes
+            for subsub in sub.get("sub_shapes", []):
+                idx[subsub["id"]] = subsub
+    return idx
+
+
+def _resolve_connection_point(shape: dict, cell_ref: str, page_h: float,
+                               shape_index: dict) -> tuple[float, float] | None:
+    """Resolve a connection cell reference to page coordinates (px).
+
+    cell_ref like 'Controls.Row_1' or 'Connections.X1'
+    """
+    pin_x = _get_cell_float(shape, "PinX")
+    pin_y = _get_cell_float(shape, "PinY")
+    loc_pin_x = _get_cell_float(shape, "LocPinX")
+    loc_pin_y = _get_cell_float(shape, "LocPinY")
+
+    if cell_ref.startswith("Controls."):
+        row_key = cell_ref.split(".", 1)[1]  # e.g. "Row_1"
+        ctrl = shape.get("controls", {}).get(row_key)
+        if ctrl:
+            lx = _safe_float(ctrl.get("X"))
+            ly = _safe_float(ctrl.get("Y"))
+            # Local to page
+            px = (pin_x - loc_pin_x + lx) * _INCH_TO_PX
+            py = (page_h - (pin_y - loc_pin_y + ly)) * _INCH_TO_PX
+            return (px, py)
+
+    elif cell_ref.startswith("Connections."):
+        # Parse "X1" -> row IX=0, "X2" -> IX=1, etc
+        suffix = cell_ref.split(".", 1)[1]  # e.g. "X1"
+        m = re.match(r"X(\d+)", suffix)
+        if m:
+            row_ix = str(int(m.group(1)) - 1)  # X1 -> IX=0
+            conn = shape.get("connections", {}).get(row_ix)
+            if conn:
+                lx = _safe_float(conn.get("X"))
+                ly = _safe_float(conn.get("Y"))
+                px = (pin_x - loc_pin_x + lx) * _INCH_TO_PX
+                py = (page_h - (pin_y - loc_pin_y + ly)) * _INCH_TO_PX
+                return (px, py)
+
+    return None
+
+
+def _render_connections_svg(connects: list[dict], shape_index: dict,
+                            page_h: float, masters: dict) -> list[str]:
+    """Render connection lines as SVG elements."""
+    lines = []
+    for conn in connects:
+        from_shape = shape_index.get(conn["from_sheet"])
+        to_shape = shape_index.get(conn["to_sheet"])
+        if not from_shape or not to_shape:
+            continue
+
+        # Merge with masters for connections/controls data
+        from_shape = _merge_shape_with_master(
+            from_shape, masters, from_shape.get("master", ""))
+        to_shape = _merge_shape_with_master(
+            to_shape, masters, to_shape.get("master", ""))
+
+        from_pt = _resolve_connection_point(
+            from_shape, conn["from_cell"], page_h, shape_index)
+        to_pt = _resolve_connection_point(
+            to_shape, conn["to_cell"], page_h, shape_index)
+
+        if from_pt and to_pt:
+            lines.append(
+                f'<line x1="{from_pt[0]:.2f}" y1="{from_pt[1]:.2f}" '
+                f'x2="{to_pt[0]:.2f}" y2="{to_pt[1]:.2f}" '
+                f'stroke="#666666" stroke-width="0.75"/>'
+            )
+        elif to_pt:
+            # No from-point (no Controls) — draw vertical drop from bus Y
+            # Use bus shape's PinY as the connection Y
+            bus_y = (page_h - _get_cell_float(from_shape, "PinY")) * _INCH_TO_PX
+            lines.append(
+                f'<line x1="{to_pt[0]:.2f}" y1="{bus_y:.2f}" '
+                f'x2="{to_pt[0]:.2f}" y2="{to_pt[1]:.2f}" '
+                f'stroke="#666666" stroke-width="0.75"/>'
+            )
+
+    return lines
+
+
 def _parse_vsdx_shapes(page_xml: bytes, master_texts: dict | None = None,
                        masters: dict | None = None) -> list[dict]:
     """Parse shapes from a Visio page XML into rich shape dicts.
@@ -992,7 +1124,8 @@ def _parse_vsdx_shapes(page_xml: bytes, master_texts: dict | None = None,
 
 
 def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
-                   masters: dict | None = None) -> str:
+                   masters: dict | None = None,
+                   connects: list[dict] | None = None) -> str:
     """Generate SVG string from parsed shapes."""
     ET.register_namespace("", "http://www.w3.org/2000/svg")
     ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
@@ -1015,6 +1148,12 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
     for s in shapes:
         svg_elements = _render_shape_svg(s, page_h, masters)
         svg_lines.extend(svg_elements)
+
+    # Render connections
+    if connects:
+        shape_index = _build_shape_index(shapes)
+        conn_lines = _render_connections_svg(connects, shape_index, page_h, masters)
+        svg_lines.extend(conn_lines)
 
     svg_lines.append("</svg>")
     return "\n".join(svg_lines)
@@ -1192,7 +1331,14 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
             if not shapes:
                 continue
 
-            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters)
+            # Parse connections
+            try:
+                page_root = ET.fromstring(page_xml)
+                connects = _parse_connects(page_root)
+            except ET.ParseError:
+                connects = []
+
+            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters, connects)
             svg_path = os.path.join(output_dir, f"{basename}_page{i + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
@@ -1342,7 +1488,13 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
             if not shapes:
                 return None
 
-            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters)
+            try:
+                page_root = ET.fromstring(page_xml)
+                connects = _parse_connects(page_root)
+            except ET.ParseError:
+                connects = []
+
+            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters, connects)
             svg_path = os.path.join(output_dir, f"{basename}_page{page_index + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
