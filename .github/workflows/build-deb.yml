@@ -53,6 +53,10 @@ jobs:
             cp "$mo" $PKG/usr/share/locale/$lang/LC_MESSAGES/
           done
 
+          # Icon
+          mkdir -p $PKG/usr/share/icons/hicolor/scalable/apps
+          cp data/icons/hicolor/scalable/apps/org.nylander.vsdview.svg $PKG/usr/share/icons/hicolor/scalable/apps/
+
           # Desktop + MIME + metainfo
           cp data/org.nylander.vsdview.desktop $PKG/usr/share/applications/
           cp data/org.nylander.vsdview.mime.xml $PKG/usr/share/mime/packages/
