@@ -1,5 +1,5 @@
 # SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# Copyright (C) YEAR Daniel Nylander
 # This file is distributed under the same license as the vsdview package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 # 
@@ -9,9 +9,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: vsdview 0.2.0\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-17 09:39+0100\n"
+"Project-Id-Version: vsdview\n"
+"Report-Msgid-Bugs-To: daniel@danielnylander.se\n"
+"POT-Creation-Date: 2026-02-17 18:14+0100\n"
 "PO-Revision-Date: 2026-02-17 06:59+0000\n"
 "Last-Translator: Daniel Nylander <po@danielnylander.se>, 2026\n"
 "Language-Team: Swedish (https://app.transifex.com/danielnylander/teams/304899/sv/)\n"
@@ -33,12 +33,12 @@ msgstr ""
 msgid "not found"
 msgstr "hittades inte"
 
-#: vsdview/converter.py:338
+#: vsdview/converter.py:2422
 #, python-format
 msgid "Unsupported file format: %s"
 msgstr "Filformatet stöds inte: %s"
 
-#: vsdview/converter.py:353
+#: vsdview/converter.py:2437
 #, python-format
 msgid ""
 "Cannot open %s files without libvisio. Install it:\n"
@@ -51,7 +51,7 @@ msgstr ""
 "  Fedora: sudo dnf install libvisio-tools\n"
 "  macOS: brew install libvisio"
 
-#: vsdview/converter.py:360
+#: vsdview/converter.py:2444
 msgid ""
 "Could not parse the Visio file. The file may be corrupt or unsupported.\n"
 "For best results, install libvisio-tools."
@@ -59,7 +59,7 @@ msgstr ""
 "Det gick inte att tolka Visio-filen. Filen kan vara skadad eller stöds inte.\n"
 "För bästa resultat, installera libvisio-tools."
 
-#: vsdview/converter.py:423
+#: vsdview/converter.py:2537
 msgid ""
 "Neither rsvg-convert nor cairosvg found. Install one:\n"
 "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
@@ -69,7 +69,7 @@ msgstr ""
 "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
 "  pip install cairosvg"
 
-#: vsdview/converter.py:437
+#: vsdview/converter.py:2551
 msgid ""
 "cairosvg is required for PDF export. Install it:\n"
 "  pip install cairosvg"
@@ -77,87 +77,111 @@ msgstr ""
 "cairosvg krävs för PDF-export. Installera det:\n"
 "  pip install cairosvg"
 
-#: vsdview/window.py:53
+#: vsdview/window.py:36
+msgid "Canvas: System theme"
+msgstr ""
+
+#: vsdview/window.py:37
+msgid "Canvas: Light background"
+msgstr ""
+
+#: vsdview/window.py:38
+msgid "Canvas: Dark background"
+msgstr ""
+
+#: vsdview/window.py:93
 msgid "Open Visio file"
 msgstr "Öppna Visio-fil"
 
-#: vsdview/window.py:59
+#: vsdview/window.py:99
 msgid "Find text"
 msgstr "Hitta text"
 
-#: vsdview/window.py:68
+#: vsdview/window.py:114
 msgid "Recent Files"
 msgstr "Senaste filer"
 
-#: vsdview/window.py:71 vsdview/window.py:166
+#: vsdview/window.py:117 vsdview/window.py:227
 msgid "Export as PNG"
 msgstr "Exportera som PNG"
 
-#: vsdview/window.py:72 vsdview/window.py:167
+#: vsdview/window.py:118 vsdview/window.py:228
 msgid "Export as PDF"
 msgstr "Exportera som PDF"
 
-#: vsdview/window.py:73 vsdview/window.py:168
+#: vsdview/window.py:119 vsdview/window.py:229
 msgid "Export as Text"
 msgstr "Exportera som text"
 
-#: vsdview/window.py:74
+#: vsdview/window.py:120
 msgid "Export"
 msgstr "Exportera"
 
-#: vsdview/window.py:76 vsdview/window.py:165
+#: vsdview/window.py:122 vsdview/window.py:226
 msgid "Copy Text"
 msgstr "Kopiera text"
 
-#: vsdview/window.py:77
-msgid "Toggle Dark Theme"
-msgstr "Växla till mörkt tema"
+#: vsdview/window.py:125
+msgid "System"
+msgstr ""
 
-#: vsdview/window.py:78
+#: vsdview/window.py:126
+msgid "Light"
+msgstr ""
+
+#: vsdview/window.py:127
+msgid "Dark"
+msgstr ""
+
+#: vsdview/window.py:128
+msgid "Canvas Background"
+msgstr ""
+
+#: vsdview/window.py:139
 msgid "Keyboard Shortcuts"
 msgstr "Tangentbordsgenvägar"
 
-#: vsdview/window.py:79
+#: vsdview/window.py:140
 msgid "About"
 msgstr "Om"
 
-#: vsdview/window.py:80
+#: vsdview/window.py:141
 msgid "Quit"
 msgstr "Avsluta"
 
-#: vsdview/window.py:136 vsdview/window.py:264
+#: vsdview/window.py:197 vsdview/window.py:325
 msgid "No file loaded"
 msgstr "Ingen fil inläst"
 
-#: vsdview/window.py:229
+#: vsdview/window.py:290
 #, python-format
 msgid "%d match(es) found"
 msgstr "%d träffar hittades"
 
-#: vsdview/window.py:261
+#: vsdview/window.py:322
 msgid "Page"
 msgstr "Sida"
 
-#: vsdview/window.py:269
+#: vsdview/window.py:330
 msgid "Visio files"
 msgstr "Visio-filer"
 
-#: vsdview/window.py:291
+#: vsdview/window.py:352
 msgid "Conversion failed"
 msgstr "Konvertering misslyckades"
 
-#: vsdview/window.py:296
+#: vsdview/window.py:357
 msgid "No SVG output produced."
 msgstr "Ingen SVG-utdata producerad."
 
-#: vsdview/window.py:394 vsdview/window.py:421 vsdview/window.py:477
+#: vsdview/window.py:455 vsdview/window.py:482 vsdview/window.py:573
 msgid "No file loaded to export."
 msgstr "Ingen fil inläst för export."
 
-#: vsdview/window.py:528
+#: vsdview/window.py:632
 msgid "Error"
 msgstr "Fel"
 
-#: vsdview/window.py:531
+#: vsdview/window.py:635
 msgid "OK"
 msgstr "OK"
