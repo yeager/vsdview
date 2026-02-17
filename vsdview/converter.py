@@ -195,7 +195,7 @@ def _resolve_color(val: str, theme_colors: dict[str, str] | None = None) -> str:
                     return theme_colors[idx]
         return ""
 
-    if val.startswith("=") or "THEME" in val:
+    if val == "Inh" or val.startswith("=") or "THEME" in val:
         return ""
 
     # #RRGGBB or #RGB
@@ -796,9 +796,16 @@ def _geometry_to_path(geo: dict, w: float, h: float,
     if geo.get("no_show"):
         return ""
 
+    # Use absolute dimensions for coordinate calculations — 1D connectors
+    # can have negative Width/Height (e.g. Height=-0.867 when EndY < BeginY).
+    abs_w = abs(w) if abs(w) > 1e-10 else 0.0
+    abs_h = abs(h) if abs(h) > 1e-10 else 0.0
+
     # Compute scale factors if geometry came from a master with different dims
-    sx = w / master_w if master_w > 1e-6 and abs(master_w - w) > 1e-6 else 1.0
-    sy = h / master_h if master_h > 1e-6 and abs(master_h - h) > 1e-6 else 1.0
+    abs_mw = abs(master_w)
+    abs_mh = abs(master_h)
+    sx = abs_w / abs_mw if abs_mw > 1e-6 and abs(abs_mw - abs_w) > 1e-6 else 1.0
+    sy = abs_h / abs_mh if abs_mh > 1e-6 and abs(abs_mh - abs_h) > 1e-6 else 1.0
 
     d_parts = []
     cx, cy = 0.0, 0.0  # Current point (inches)
@@ -807,30 +814,49 @@ def _geometry_to_path(geo: dict, w: float, h: float,
         rt = row["type"]
         cells = row["cells"]
 
+        # Skip geometry rows where all coordinate cells are empty/zero
+        # (spurious rows from connectors with partial geometry)
+        if rt in ("LineTo", "MoveTo", "ArcTo") and rt != "MoveTo":
+            _has_any = False
+            for _cn in ("X", "Y", "A"):
+                _cv = cells.get(_cn, {}).get("V")
+                if _cv is not None and _cv != "" and _cv != "0":
+                    _has_any = True
+                    break
+            # Also check if there's a formula (F attribute) — inherited rows
+            if not _has_any:
+                for _cn in ("X", "Y", "A"):
+                    _cf = cells.get(_cn, {}).get("F", "")
+                    if _cf and _cf != "Inh":
+                        _has_any = True
+                        break
+            if not _has_any:
+                continue
+
         if rt == "MoveTo":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
-            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "RelMoveTo":
             x = _safe_float(cells.get("X", {}).get("V"))
             y = _safe_float(cells.get("Y", {}).get("V"))
-            ax, ay = x * w, y * h
-            d_parts.append(f"M {ax * _INCH_TO_PX:.2f} {(h - ay) * _INCH_TO_PX:.2f}")
+            ax, ay = x * abs_w, y * abs_h
+            d_parts.append(f"M {ax * _INCH_TO_PX:.2f} {(abs_h - ay) * _INCH_TO_PX:.2f}")
             cx, cy = ax, ay
 
         elif rt == "LineTo":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
-            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "RelLineTo":
             x = _safe_float(cells.get("X", {}).get("V"))
             y = _safe_float(cells.get("Y", {}).get("V"))
-            ax, ay = x * w, y * h
-            d_parts.append(f"L {ax * _INCH_TO_PX:.2f} {(h - ay) * _INCH_TO_PX:.2f}")
+            ax, ay = x * abs_w, y * abs_h
+            d_parts.append(f"L {ax * _INCH_TO_PX:.2f} {(abs_h - ay) * _INCH_TO_PX:.2f}")
             cx, cy = ax, ay
 
         elif rt == "ArcTo":
@@ -838,7 +864,7 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
             a = _safe_float(cells.get("A", {}).get("V")) * sy  # bulge scales with Y
             # A is the bulge/sagitta of the arc
-            _append_arc(d_parts, cx, cy, x, y, a, h)
+            _append_arc(d_parts, cx, cy, x, y, a, abs_h)
             cx, cy = x, y
 
         elif rt == "EllipticalArcTo":
@@ -846,16 +872,16 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
             a = _safe_float(cells.get("A", {}).get("V")) * sx  # control point X
             b = _safe_float(cells.get("B", {}).get("V")) * sy  # control point Y
-            c = _safe_float(cells.get("C", {}).get("V"))  # major/minor ratio
-            d_val = _safe_float(cells.get("D", {}).get("V"))  # angle
-            _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, c, d_val, h)
+            c_angle = _safe_float(cells.get("C", {}).get("V"))  # angle of major axis (radians)
+            d_ratio = _safe_float(cells.get("D", {}).get("V"))  # ratio major/minor axis
+            _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, d_ratio, c_angle, abs_h)
             cx, cy = x, y
 
         elif rt == "NURBSTo":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
             # Approximate NURBS as line for now (proper NURBS requires complex computation)
-            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "RelCurveTo":
@@ -866,13 +892,13 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             c = _safe_float(cells.get("C", {}).get("V"))
             dd = _safe_float(cells.get("D", {}).get("V"))
             # Cubic bezier with relative coordinates
-            cp1x, cp1y = a * w, b * h
-            cp2x, cp2y = c * w, dd * h
-            ex, ey = x * w, y * h
+            cp1x, cp1y = a * abs_w, b * abs_h
+            cp2x, cp2y = c * abs_w, dd * abs_h
+            ex, ey = x * abs_w, y * abs_h
             d_parts.append(
-                f"C {cp1x * _INCH_TO_PX:.2f} {(h - cp1y) * _INCH_TO_PX:.2f} "
-                f"{cp2x * _INCH_TO_PX:.2f} {(h - cp2y) * _INCH_TO_PX:.2f} "
-                f"{ex * _INCH_TO_PX:.2f} {(h - ey) * _INCH_TO_PX:.2f}"
+                f"C {cp1x * _INCH_TO_PX:.2f} {(abs_h - cp1y) * _INCH_TO_PX:.2f} "
+                f"{cp2x * _INCH_TO_PX:.2f} {(abs_h - cp2y) * _INCH_TO_PX:.2f} "
+                f"{ex * _INCH_TO_PX:.2f} {(abs_h - ey) * _INCH_TO_PX:.2f}"
             )
             cx, cy = ex, ey
 
@@ -891,7 +917,7 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             if ry < 0.001:
                 ry = 0.001
             cpx = ex * _INCH_TO_PX
-            cpy = (h - ey) * _INCH_TO_PX
+            cpy = (abs_h - ey) * _INCH_TO_PX
             rpx = rx * _INCH_TO_PX
             rpy = ry * _INCH_TO_PX
             # SVG ellipse as two arcs
@@ -907,23 +933,23 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             # Try to parse the formula for intermediate points
             a_cell = cells.get("A", {})
             formula = a_cell.get("F", "")
-            pts = _parse_polyline_formula(formula, w, h)
+            pts = _parse_polyline_formula(formula, abs_w, abs_h)
             if pts:
                 for px_val, py_val in pts:
-                    d_parts.append(f"L {px_val * _INCH_TO_PX:.2f} {(h - py_val) * _INCH_TO_PX:.2f}")
-            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+                    d_parts.append(f"L {px_val * _INCH_TO_PX:.2f} {(abs_h - py_val) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "SplineStart":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
-            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "SplineKnot":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
-            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "InfiniteLine":
@@ -931,8 +957,8 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
             a = _safe_float(cells.get("A", {}).get("V")) * sx
             b = _safe_float(cells.get("B", {}).get("V")) * sy
-            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
-            d_parts.append(f"L {a * _INCH_TO_PX:.2f} {(h - b) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"L {a * _INCH_TO_PX:.2f} {(abs_h - b) * _INCH_TO_PX:.2f}")
             cx, cy = a, b
 
     return " ".join(d_parts)
@@ -976,7 +1002,7 @@ def _append_elliptical_arc(d_parts: list, cx: float, cy: float,
                            c: float, d_val: float, h: float):
     """Append an elliptical arc segment.
 
-    (a,b) = control point, c = aspect ratio, d_val = rotation angle.
+    (a,b) = control point, c = aspect ratio (D cell), d_val = rotation angle (C cell).
     For simplicity, approximate with SVG arc.
     """
     # Compute approximate radius from control point
@@ -994,7 +1020,7 @@ def _append_elliptical_arc(d_parts: list, cx: float, cy: float,
         return
 
     rx = (chord * chord / 4 + sagitta * sagitta) / (2 * sagitta)
-    ry = rx * c if c > 0 else rx
+    ry = rx / c if c > 0.001 else rx  # c is major/minor ratio
     angle_deg = math.degrees(d_val) if d_val else 0
 
     rx_px = abs(rx * _INCH_TO_PX)
@@ -1004,9 +1030,11 @@ def _append_elliptical_arc(d_parts: list, cx: float, cy: float,
     if ry_px < 0.1:
         ry_px = 0.1
 
-    # Determine arc direction from control point position relative to chord
+    # Determine arc direction from control point position relative to chord.
+    # The cross product sign tells us which side of the chord the control point is on.
+    # In Visio coords (Y-up), but SVG uses Y-down, so we negate the result.
     cross = (x - cx) * (b - cy) - (y - cy) * (a - cx)
-    sweep = 1 if cross < 0 else 0
+    sweep = 0 if cross < 0 else 1
     large_arc = 0
 
     d_parts.append(
@@ -1165,6 +1193,29 @@ def _get_cell_float(shape: dict, name: str, default: float = 0.0) -> float:
     return _safe_float(_get_cell_val(shape, name), default)
 
 
+def _resolve_quickstyle_color(qs_fill_color: int,
+                              theme_colors: dict[str, str]) -> str:
+    """Map QuickStyleFillColor index to a theme color.
+
+    Visio QuickStyle indices:
+      0=dk1, 1=lt1, 2=dk2, 3=lt2, 4=accent1, ..., 9=accent6
+      100=dk1, 101=lt1, 102=dk2(tinted), 103-108=accent1-6(tinted)
+    """
+    _qs_map = {
+        0: "dk1", 1: "lt1", 2: "dk2", 3: "lt2",
+        4: "accent1", 5: "accent2", 6: "accent3",
+        7: "accent4", 8: "accent5", 9: "accent6",
+        100: "dk1", 101: "lt1", 102: "dk2",
+        103: "accent1", 104: "accent2", 105: "accent3",
+        106: "accent4", 107: "accent5", 108: "accent6",
+    }
+    name = _qs_map.get(qs_fill_color)
+    if name and name in theme_colors:
+        return theme_colors[name]
+    # Default to accent1 for unknown values
+    return theme_colors.get("accent1", "")
+
+
 def _compute_transform(shape: dict, page_h: float) -> str:
     """Compute SVG transform for a shape.
 
@@ -1177,7 +1228,7 @@ def _compute_transform(shape: dict, page_h: float) -> str:
     loc_pin_y_raw = _get_cell_float(shape, "LocPinY")
     w = _get_cell_float(shape, "Width")
     h = _get_cell_float(shape, "Height")
-    loc_pin_y = (h - loc_pin_y_raw) * _INCH_TO_PX  # Flip Y for local pin
+    loc_pin_y = (abs(h) - loc_pin_y_raw) * _INCH_TO_PX  # Flip Y for local pin
 
     angle = _get_cell_float(shape, "Angle")
     flip_x = _get_cell_val(shape, "FlipX") == "1"
@@ -1267,8 +1318,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     w_inch = _get_cell_float(shape, "Width")
     h_inch = _get_cell_float(shape, "Height")
-    w_px = w_inch * _INCH_TO_PX
-    h_px = h_inch * _INCH_TO_PX
+    w_px = abs(w_inch) * _INCH_TO_PX
+    h_px = abs(h_inch) * _INCH_TO_PX
 
     # --- Style ---
     line_weight = _get_cell_float(shape, "LineWeight", 0.01) * _INCH_TO_PX
@@ -1284,6 +1335,27 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     # Also try resolving via formula if value is a color index
     _ff_formula = shape.get("cells", {}).get("FillForegnd", {}).get("F", "")
     _fb_formula = shape.get("cells", {}).get("FillBkgnd", {}).get("F", "")
+    _lc_formula = shape.get("cells", {}).get("LineColor", {}).get("F", "")
+
+    # Resolve THEMEVAL formulas and QuickStyle colors from theme
+    qs_fill_color_val = _get_cell_val(shape, "QuickStyleFillColor")
+    if theme_colors and qs_fill_color_val:
+        qs_fill_color = int(_safe_float(qs_fill_color_val, -1))
+        _theme_fill = _resolve_quickstyle_color(qs_fill_color, theme_colors) if qs_fill_color >= 0 else ""
+
+        # When FillForegnd has THEMEVAL("FillColor",...), resolve from theme
+        if _ff_formula and "THEMEVAL" in _ff_formula and "FillColor" in _ff_formula:
+            if _theme_fill:
+                fill_foregnd = _theme_fill
+        # When FillBkgnd has THEMEVAL("FillColor2",...), resolve from theme
+        if _fb_formula and "THEMEVAL" in _fb_formula and "FillColor2" in _fb_formula:
+            if _theme_fill:
+                fill_bkgnd = _lighten_color(_theme_fill, 0.85)
+
+        # When FillForegnd is completely absent but QuickStyleFillColor exists,
+        # the shape relies entirely on theme for its fill color
+        if not fill_foregnd and not _ff_formula and _theme_fill:
+            fill_foregnd = _theme_fill
 
     # GUARD(color_index) in Visio stencils are theme accent placeholders.
     # Replace magenta (#FF00FF, color 6) with theme accent or sensible default.
@@ -1297,6 +1369,15 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         fill_foregnd = theme_colors.get("accent1", "")
     if not fill_bkgnd and _fb_formula and ("THEME" in _fb_formula or "GUARD" in _fb_formula):
         fill_bkgnd = theme_colors.get("accent1", "")
+
+    # Handle F="Inh" (inherited from theme) — if value couldn't be resolved,
+    # use theme colors as fallback
+    if not fill_foregnd and _ff_formula == "Inh" and theme_colors:
+        fill_foregnd = theme_colors.get("accent1", "")
+    if not fill_bkgnd and _fb_formula == "Inh" and theme_colors:
+        fill_bkgnd = theme_colors.get("accent1", "")
+    if line_color == "#333333" and _lc_formula and (_lc_formula == "Inh" or "THEME" in _lc_formula) and theme_colors:
+        line_color = theme_colors.get("dk1", "#333333")
 
     fill_pattern = _get_cell_val(shape, "FillPattern", "1")
     line_pattern = int(_safe_float(_get_cell_val(shape, "LinePattern", "1")))
