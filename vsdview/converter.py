@@ -82,16 +82,43 @@ _LINE_PATTERNS = {
 _INCH_TO_PX = 72.0
 
 
+def _hsl_to_rgb(h: int, s: int, l: int) -> str:
+    """Convert Visio HSL (h=0-255, s=0-255, l=0-255) to #RRGGBB."""
+    # Normalize to 0-1 range
+    hf = (h / 255.0) * 360.0
+    sf = s / 255.0
+    lf = l / 255.0
+    # HSL to RGB conversion
+    if sf == 0:
+        r = g = b = lf
+    else:
+        def hue2rgb(p, q, t):
+            if t < 0: t += 1
+            if t > 1: t -= 1
+            if t < 1/6: return p + (q - p) * 6 * t
+            if t < 1/2: return q
+            if t < 2/3: return p + (q - p) * (2/3 - t) * 6
+            return p
+        q = lf * (1 + sf) if lf < 0.5 else lf + sf - lf * sf
+        p = 2 * lf - q
+        hn = hf / 360.0
+        r = hue2rgb(p, q, hn + 1/3)
+        g = hue2rgb(p, q, hn)
+        b = hue2rgb(p, q, hn - 1/3)
+    return f"#{int(r*255):02X}{int(g*255):02X}{int(b*255):02X}"
+
+
 def _resolve_color(val: str) -> str:
     """Convert a Visio color value to an SVG color string.
 
-    Handles: color index, #RRGGBB, RGB(r,g,b), THEMEVAL(), etc.
+    Handles: color index, #RRGGBB, RGB(r,g,b), HSL(h,s,l), THEMEVAL(), etc.
+    Returns empty string for unresolvable values (caller decides default).
     """
     if not val:
         return ""
     val = val.strip()
 
-    # THEMEVAL or formula — return empty (use default)
+    # THEMEVAL or formula — return empty (use default, not black)
     if "THEMEVAL" in val or "THEME" in val or val.startswith("="):
         return ""
 
@@ -105,22 +132,22 @@ def _resolve_color(val: str) -> str:
         r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
         return f"#{r:02X}{g:02X}{b:02X}"
 
-    # HSL function — approximate
+    # HSL(h,s,l) function — Visio uses 0-255 range
     m = re.match(r"HSL\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", val, re.IGNORECASE)
     if m:
-        return ""  # Let it use default
+        return _hsl_to_rgb(int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
     # Numeric index
     try:
         idx = int(val)
-        return _VISIO_COLORS.get(idx, "#000000")
+        return _VISIO_COLORS.get(idx, "")
     except ValueError:
         pass
 
     # Try float index
     try:
         idx = int(float(val))
-        return _VISIO_COLORS.get(idx, "#000000")
+        return _VISIO_COLORS.get(idx, "")
     except (ValueError, TypeError):
         pass
 
@@ -356,14 +383,21 @@ def _parse_text_element(text_elem: ET.Element) -> list:
 # Geometry to SVG path conversion
 # ---------------------------------------------------------------------------
 
-def _geometry_to_path(geo: dict, w: float, h: float) -> str:
+def _geometry_to_path(geo: dict, w: float, h: float,
+                      master_w: float = 0.0, master_h: float = 0.0) -> str:
     """Convert a parsed Geometry section to an SVG path 'd' attribute.
 
     Coordinates are in local shape space (inches), will be scaled to px.
     w, h are shape width/height in inches for relative coordinates.
+    master_w, master_h: if geometry was inherited from a master, these are
+    the master's original dimensions for coordinate scaling.
     """
     if geo.get("no_show"):
         return ""
+
+    # Compute scale factors if geometry came from a master with different dims
+    sx = w / master_w if master_w > 1e-6 and abs(master_w - w) > 1e-6 else 1.0
+    sy = h / master_h if master_h > 1e-6 and abs(master_h - h) > 1e-6 else 1.0
 
     d_parts = []
     cx, cy = 0.0, 0.0  # Current point (inches)
@@ -373,8 +407,8 @@ def _geometry_to_path(geo: dict, w: float, h: float) -> str:
         cells = row["cells"]
 
         if rt == "MoveTo":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
             d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
@@ -386,8 +420,8 @@ def _geometry_to_path(geo: dict, w: float, h: float) -> str:
             cx, cy = ax, ay
 
         elif rt == "LineTo":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
             d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
@@ -399,26 +433,26 @@ def _geometry_to_path(geo: dict, w: float, h: float) -> str:
             cx, cy = ax, ay
 
         elif rt == "ArcTo":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
-            a = _safe_float(cells.get("A", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
+            a = _safe_float(cells.get("A", {}).get("V")) * sy  # bulge scales with Y
             # A is the bulge/sagitta of the arc
             _append_arc(d_parts, cx, cy, x, y, a, h)
             cx, cy = x, y
 
         elif rt == "EllipticalArcTo":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
-            a = _safe_float(cells.get("A", {}).get("V"))  # control point X
-            b = _safe_float(cells.get("B", {}).get("V"))  # control point Y
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
+            a = _safe_float(cells.get("A", {}).get("V")) * sx  # control point X
+            b = _safe_float(cells.get("B", {}).get("V")) * sy  # control point Y
             c = _safe_float(cells.get("C", {}).get("V"))  # major/minor ratio
             d_val = _safe_float(cells.get("D", {}).get("V"))  # angle
             _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, c, d_val, h)
             cx, cy = x, y
 
         elif rt == "NURBSTo":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
             # Approximate NURBS as line for now (proper NURBS requires complex computation)
             d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
@@ -443,12 +477,12 @@ def _geometry_to_path(geo: dict, w: float, h: float) -> str:
 
         elif rt == "Ellipse":
             # Full ellipse: center (X,Y), point on major axis (A,B), point on minor axis (C,D)
-            ex = _safe_float(cells.get("X", {}).get("V"))
-            ey = _safe_float(cells.get("Y", {}).get("V"))
-            ea = _safe_float(cells.get("A", {}).get("V"))
-            eb = _safe_float(cells.get("B", {}).get("V"))
-            ec = _safe_float(cells.get("C", {}).get("V"))
-            ed = _safe_float(cells.get("D", {}).get("V"))
+            ex = _safe_float(cells.get("X", {}).get("V")) * sx
+            ey = _safe_float(cells.get("Y", {}).get("V")) * sy
+            ea = _safe_float(cells.get("A", {}).get("V")) * sx
+            eb = _safe_float(cells.get("B", {}).get("V")) * sy
+            ec = _safe_float(cells.get("C", {}).get("V")) * sx
+            ed = _safe_float(cells.get("D", {}).get("V")) * sy
             rx = math.sqrt((ea - ex) ** 2 + (eb - ey) ** 2)
             ry = math.sqrt((ec - ex) ** 2 + (ed - ey) ** 2)
             if rx < 0.001:
@@ -467,8 +501,8 @@ def _geometry_to_path(geo: dict, w: float, h: float) -> str:
             )
 
         elif rt == "PolylineTo":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
             # Try to parse the formula for intermediate points
             a_cell = cells.get("A", {})
             formula = a_cell.get("F", "")
@@ -480,22 +514,22 @@ def _geometry_to_path(geo: dict, w: float, h: float) -> str:
             cx, cy = x, y
 
         elif rt == "SplineStart":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
             d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "SplineKnot":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
             d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "InfiniteLine":
-            x = _safe_float(cells.get("X", {}).get("V"))
-            y = _safe_float(cells.get("Y", {}).get("V"))
-            a = _safe_float(cells.get("A", {}).get("V"))
-            b = _safe_float(cells.get("B", {}).get("V"))
+            x = _safe_float(cells.get("X", {}).get("V")) * sx
+            y = _safe_float(cells.get("Y", {}).get("V")) * sy
+            a = _safe_float(cells.get("A", {}).get("V")) * sx
+            b = _safe_float(cells.get("B", {}).get("V")) * sy
             d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
             d_parts.append(f"L {a * _INCH_TO_PX:.2f} {(h - b) * _INCH_TO_PX:.2f}")
             cx, cy = a, b
@@ -635,6 +669,13 @@ def _merge_shape_with_master(shape: dict, masters: dict,
     # Merge geometry: use local if present, otherwise master
     if not shape["geometry"] and master_sd.get("geometry"):
         shape["geometry"] = master_sd["geometry"]
+        # Store master's original dimensions for geometry coordinate scaling
+        master_w_val = master_sd.get("cells", {}).get("Width", {}).get("V")
+        master_h_val = master_sd.get("cells", {}).get("Height", {}).get("V")
+        if master_w_val:
+            shape["_master_w"] = _safe_float(master_w_val)
+        if master_h_val:
+            shape["_master_h"] = _safe_float(master_h_val)
 
     # Merge text: use local if present, otherwise master
     if not shape["text"] and master_sd.get("text"):
@@ -724,7 +765,16 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     lines = []
 
-    # Skip shapes marked as hidden
+    # Skip shapes that are invisible or purely connection/control metadata
+    vis_val = _get_cell_val(shape, "Visible")
+    if vis_val == "0":
+        return lines
+
+    # Skip shapes with only connection points and no geometry/text (connection markers)
+    if (shape.get("connections") and not shape.get("geometry")
+            and not shape.get("text") and not shape.get("sub_shapes")):
+        return lines
+
     # Handle shape type
     shape_type = shape.get("type", "Shape")
 
@@ -740,8 +790,9 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     elif line_weight > 20:
         line_weight = 20
 
-    line_color = _resolve_color(_get_cell_val(shape, "LineColor")) or "#000000"
+    line_color = _resolve_color(_get_cell_val(shape, "LineColor")) or "#333333"
     fill_foregnd = _resolve_color(_get_cell_val(shape, "FillForegnd"))
+    fill_bkgnd = _resolve_color(_get_cell_val(shape, "FillBkgnd"))
     fill_pattern = _get_cell_val(shape, "FillPattern", "1")
     line_pattern = int(_safe_float(_get_cell_val(shape, "LinePattern", "1")))
     rounding = _get_cell_float(shape, "Rounding") * _INCH_TO_PX
@@ -751,8 +802,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         fill = "none"
     elif fill_foregnd:
         fill = fill_foregnd
+    elif fill_bkgnd:
+        fill = fill_bkgnd
     else:
-        fill = "#FFFFFF"
+        fill = "none"
 
     # No line if pattern 0
     stroke = line_color if line_pattern != 0 else "none"
@@ -782,11 +835,13 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     if shape_type == "Group":
         transform = _compute_transform(shape, page_h)
         group_master_id = shape.get("master", "") or parent_master_id
+        # Group's local coordinate system uses its own Width x Height
+        group_h = h_inch
         lines.append(f'<g transform="{transform}">')
         for sub in shape.get("sub_shapes", []):
-            lines.extend(_render_shape_svg(sub, h_inch, masters, group_master_id))
+            lines.extend(_render_shape_svg(sub, group_h, masters, group_master_id))
         lines.append('</g>')
-        # Also render text for the group
+        # Render text for the group itself
         if shape["text"]:
             _append_text_svg(lines, shape, page_h, w_px, h_px)
         return lines
@@ -798,8 +853,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     has_geometry = bool(shape["geometry"])
 
     if has_geometry:
+        master_w = shape.get("_master_w", 0.0)
+        master_h = shape.get("_master_h", 0.0)
         for geo in shape["geometry"]:
-            path_d = _geometry_to_path(geo, w_inch, h_inch)
+            path_d = _geometry_to_path(geo, w_inch, h_inch, master_w, master_h)
             if not path_d:
                 continue
 
