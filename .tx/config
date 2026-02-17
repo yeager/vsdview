@@ -6,9 +6,3 @@ file_filter = po/<lang>.po
 source_file = po/vsdview.pot
 source_lang = en
 type = PO
-
-[o:danielnylander:p:vsdview:r:vsdview-man]
-file_filter = po/<lang>/vsdview-man.po
-source_file = po/vsdview-man.pot
-source_lang = en
-type = PO
