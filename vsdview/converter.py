@@ -2586,11 +2586,33 @@ def export_to_png(svg_path: str, output_path: str, width: int = 1920) -> str:
     )
 
 
+def _add_watermark(svg_content: str) -> str:
+    """Add a discreet 'VSDView' watermark in the bottom-right corner of SVG."""
+    import re
+    # Extract viewBox dimensions to position watermark
+    vb_match = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg_content)
+    if not vb_match:
+        return svg_content
+    vb_w = float(vb_match.group(1))
+    vb_h = float(vb_match.group(2))
+    watermark = (
+        f'<text x="{vb_w - 8:.1f}" y="{vb_h - 6:.1f}" '
+        f'font-family="sans-serif" font-size="9" '
+        f'fill="#b0b0b0" fill-opacity="0.5" '
+        f'text-anchor="end">VSDView</text>'
+    )
+    return svg_content.replace("</svg>", f"{watermark}\n</svg>")
+
+
 def export_to_pdf(svg_path: str, output_path: str) -> str:
     """Export an SVG to PDF using cairosvg."""
     try:
         import cairosvg
-        cairosvg.svg2pdf(url=svg_path, write_to=output_path)
+        with open(svg_path, "r", encoding="utf-8") as f:
+            svg_content = f.read()
+        svg_content = _add_watermark(svg_content)
+        cairosvg.svg2pdf(bytestring=svg_content.encode("utf-8"),
+                         write_to=output_path)
         return output_path
     except ImportError:
         raise RuntimeError(
