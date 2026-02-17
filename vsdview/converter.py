@@ -961,7 +961,11 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             d_parts.append(f"L {a * _INCH_TO_PX:.2f} {(abs_h - b) * _INCH_TO_PX:.2f}")
             cx, cy = a, b
 
-    return " ".join(d_parts)
+    result = " ".join(d_parts)
+    # Ensure path starts with M (MoveTo) — invalid paths crash renderers
+    if result and not result.startswith("M"):
+        result = f"M 0.00 0.00 {result}"
+    return result
 
 
 def _append_arc(d_parts: list, cx: float, cy: float, x: float, y: float,
@@ -1323,8 +1327,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     # --- Style ---
     line_weight = _get_cell_float(shape, "LineWeight", 0.01) * _INCH_TO_PX
-    if line_weight < 0.25:
-        line_weight = 0.75
+    if line_weight < 0.5:
+        line_weight = 1.5  # Minimum visible stroke width
     elif line_weight > 20:
         line_weight = 20
 
@@ -1485,6 +1489,9 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     is_connector = is_1d or obj_type == "2"
 
     if is_connector and is_1d:
+        # Ensure connector lines are visible (minimum 2.0px)
+        if stroke_width < 2.0:
+            stroke_width = 2.0
         # 1D shape — check for geometry (routed connectors) first
         bx = _safe_float(begin_x) * _INCH_TO_PX
         by = (page_h - _safe_float(begin_y)) * _INCH_TO_PX
@@ -1507,27 +1514,66 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             used_markers.add(mid)
             marker_attrs += f' marker-end="url(#{mid})"'
 
-        has_own_geo = shape.get("_has_own_geometry", False)
-        if has_geometry and has_own_geo:
-            # Routed connector — render geometry path instead of straight line
-            master_w = shape.get("_master_w", 0.0)
-            master_h = shape.get("_master_h", 0.0)
+        # Convert connector geometry to page-coordinate polyline
+        # This avoids transform/negative-dimension issues
+        if has_geometry:
+            # Build polyline from geometry rows in page coordinates
+            # Transform local geo coords to page space using PinX/PinY
+            pin_x = _get_cell_float(shape, "PinX")
+            pin_y = _get_cell_float(shape, "PinY")
+            loc_pin_x = _get_cell_float(shape, "LocPinX")
+            loc_pin_y = _get_cell_float(shape, "LocPinY")
+            angle = _get_cell_float(shape, "Angle")
+            import math
+            cos_a = math.cos(angle) if abs(angle) > 1e-6 else 1.0
+            sin_a = math.sin(angle) if abs(angle) > 1e-6 else 0.0
+
+            points = []
             for geo in shape["geometry"]:
-                path_d = _geometry_to_path(geo, w_inch, h_inch, master_w, master_h)
-                if not path_d:
+                if geo.get("no_show"):
                     continue
-                geo_stroke = stroke
-                if geo.get("no_line"):
-                    geo_stroke = "none"
+                for row in geo["rows"]:
+                    rt = row["type"]
+                    cells = row["cells"]
+                    if rt in ("MoveTo", "LineTo", "ArcTo"):
+                        lx = _safe_float(cells.get("X", {}).get("V"))
+                        ly = _safe_float(cells.get("Y", {}).get("V"))
+                        # Skip empty/zero rows
+                        if abs(lx) < 1e-10 and abs(ly) < 1e-10 and rt != "MoveTo":
+                            continue
+                        # Local to page: translate by pin offset
+                        dx = lx - loc_pin_x
+                        dy = ly - loc_pin_y
+                        px = pin_x + dx * cos_a - dy * sin_a
+                        py = pin_y + dx * sin_a + dy * cos_a
+                        # To SVG pixels
+                        sx_px = px * _INCH_TO_PX
+                        sy_px = (page_h - py) * _INCH_TO_PX
+                        points.append((sx_px, sy_px))
+
+            if len(points) >= 2:
+                d_parts = [f"M {points[0][0]:.2f} {points[0][1]:.2f}"]
+                for pt in points[1:]:
+                    d_parts.append(f"L {pt[0]:.2f} {pt[1]:.2f}")
+                path_d = " ".join(d_parts)
                 lines.append(
-                    f'<path d="{path_d}" fill="none" stroke="{geo_stroke}" '
+                    f'<path d="{path_d}" fill="none" stroke="{stroke}" '
                     f'stroke-width="{stroke_width:.2f}"'
                     + (f' stroke-dasharray="{dash_array}"' if dash_array else '')
                     + marker_attrs
-                    + f' transform="{transform}"/>'
+                    + '/>'
+                )
+            else:
+                # Fallback to straight line
+                lines.append(
+                    f'<line x1="{bx:.2f}" y1="{by:.2f}" x2="{ex_px:.2f}" y2="{ey_px:.2f}" '
+                    f'stroke="{stroke}" stroke-width="{stroke_width:.2f}"'
+                    + (f' stroke-dasharray="{dash_array}"' if dash_array else '')
+                    + marker_attrs
+                    + '/>'
                 )
         else:
-            # Simple straight line
+            # No geometry — simple straight line
             lines.append(
                 f'<line x1="{bx:.2f}" y1="{by:.2f}" x2="{ex_px:.2f}" y2="{ey_px:.2f}" '
                 f'stroke="{stroke}" stroke-width="{stroke_width:.2f}"'
@@ -1943,7 +1989,7 @@ def _render_connections_svg(connects: list[dict], shape_index: dict,
             lines.append(
                 f'<line x1="{from_pt[0]:.2f}" y1="{from_pt[1]:.2f}" '
                 f'x2="{to_pt[0]:.2f}" y2="{to_pt[1]:.2f}" '
-                f'stroke="#666666" stroke-width="0.75"/>'
+                f'stroke="#555555" stroke-width="1.50"/>'
             )
         elif to_pt:
             # No from-point (no Controls) — draw vertical drop from bus Y
@@ -1952,7 +1998,7 @@ def _render_connections_svg(connects: list[dict], shape_index: dict,
             lines.append(
                 f'<line x1="{to_pt[0]:.2f}" y1="{bus_y:.2f}" '
                 f'x2="{to_pt[0]:.2f}" y2="{to_pt[1]:.2f}" '
-                f'stroke="#666666" stroke-width="0.75"/>'
+                f'stroke="#555555" stroke-width="1.50"/>'
             )
 
     return lines
