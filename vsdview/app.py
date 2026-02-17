@@ -93,6 +93,30 @@ class VSDViewApplication(Adw.Application):
         self.add_action(export_action)
         self.set_accels_for_action("app.export-png", ["<Control>e"])
 
+        # Export PDF
+        export_pdf = Gio.SimpleAction.new("export-pdf", None)
+        export_pdf.connect("activate", self._on_export_pdf)
+        self.add_action(export_pdf)
+        self.set_accels_for_action("app.export-pdf", ["<Control><Shift>p"])
+
+        # Export Text
+        export_text = Gio.SimpleAction.new("export-text", None)
+        export_text.connect("activate", self._on_export_text)
+        self.add_action(export_text)
+        self.set_accels_for_action("app.export-text", ["<Control><Shift>e"])
+
+        # Search
+        search_action = Gio.SimpleAction.new("search", None)
+        search_action.connect("activate", self._on_search)
+        self.add_action(search_action)
+        self.set_accels_for_action("app.search", ["<Control>f"])
+
+        # Copy text
+        copy_text = Gio.SimpleAction.new("copy-text", None)
+        copy_text.connect("activate", self._on_copy_text)
+        self.add_action(copy_text)
+        self.set_accels_for_action("app.copy-text", ["<Control>c"])
+
         # Shortcuts dialog
         shortcuts_action = Gio.SimpleAction.new("show-shortcuts", None)
         shortcuts_action.connect("activate", self._on_show_shortcuts)
@@ -140,6 +164,26 @@ class VSDViewApplication(Adw.Application):
         win = self._get_win()
         if win:
             win.export_png()
+
+    def _on_export_pdf(self, action, param):
+        win = self._get_win()
+        if win:
+            win.export_pdf()
+
+    def _on_export_text(self, action, param):
+        win = self._get_win()
+        if win:
+            win.export_text()
+
+    def _on_search(self, action, param):
+        win = self._get_win()
+        if win:
+            win.toggle_search()
+
+    def _on_copy_text(self, action, param):
+        win = self._get_win()
+        if win:
+            win.copy_text()
 
     def _on_show_shortcuts(self, action, param):
         win = self._get_win()
@@ -227,8 +271,14 @@ SHORTCUTS_UI = """<?xml version="1.0" encoding="UTF-8"?>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Export as PNG</property>
-                <property name="accelerator">&lt;Control&gt;e</property>
+                <property name="title" translatable="yes">Find text</property>
+                <property name="accelerator">&lt;Control&gt;f</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Copy text</property>
+                <property name="accelerator">&lt;Control&gt;c</property>
               </object>
             </child>
             <child>
@@ -258,6 +308,29 @@ SHORTCUTS_UI = """<?xml version="1.0" encoding="UTF-8"?>
               <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes">Fit to window</property>
                 <property name="accelerator">&lt;Control&gt;0</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title" translatable="yes">Export</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Export as PNG</property>
+                <property name="accelerator">&lt;Control&gt;e</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Export as PDF</property>
+                <property name="accelerator">&lt;Control&gt;&lt;Shift&gt;p</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Export as Text</property>
+                <property name="accelerator">&lt;Control&gt;&lt;Shift&gt;e</property>
               </object>
             </child>
           </object>

@@ -1,14 +1,14 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the vsdview package.
+# This file is distributed under the same license as the PACKAGE package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: vsdview 0.1.7\n"
+"Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-17 09:21+0100\n"
+"POT-Creation-Date: 2026-02-17 09:39+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,89 +17,130 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: vsdview/app.py:176
+#: vsdview/app.py:220
 msgid ""
 "Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
 "is not affiliated with or endorsed by Microsoft."
 msgstr ""
 
-#: vsdview/app.py:188
+#: vsdview/app.py:232
 msgid "not found"
 msgstr ""
 
-#: vsdview/converter.py:241
+#: vsdview/converter.py:338
+#, python-format
+msgid "Unsupported file format: %s"
+msgstr ""
+
+#: vsdview/converter.py:353
+#, python-format
 msgid ""
-"Cannot open .vsd files without libvisio. Install it:\n"
+"Cannot open %s files without libvisio. Install it:\n"
 "  Ubuntu/Debian: sudo apt install libvisio-tools\n"
 "  Fedora: sudo dnf install libvisio-tools\n"
 "  macOS: brew install libvisio"
 msgstr ""
 
-#: vsdview/converter.py:248
+#: vsdview/converter.py:360
 msgid ""
 "Could not parse the Visio file. The file may be corrupt or unsupported.\n"
 "For best results, install libvisio-tools."
 msgstr ""
 
-#: vsdview/converter.py:273
+#: vsdview/converter.py:423
 msgid ""
 "Neither rsvg-convert nor cairosvg found. Install one:\n"
 "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
 "  pip install cairosvg"
 msgstr ""
 
-#: vsdview/window.py:40
-msgid "Open Visio file"
-msgstr ""
-
-#: vsdview/window.py:50
-msgid "Recent Files"
-msgstr ""
-
-#: vsdview/window.py:52
-msgid "Toggle Dark Theme"
+#: vsdview/converter.py:437
+msgid ""
+"cairosvg is required for PDF export. Install it:\n"
+"  pip install cairosvg"
 msgstr ""
 
 #: vsdview/window.py:53
-msgid "Keyboard Shortcuts"
+msgid "Open Visio file"
 msgstr ""
 
-#: vsdview/window.py:54
+#: vsdview/window.py:59
+msgid "Find text"
+msgstr ""
+
+#: vsdview/window.py:68
+msgid "Recent Files"
+msgstr ""
+
+#: vsdview/window.py:71 vsdview/window.py:166
 msgid "Export as PNG"
 msgstr ""
 
-#: vsdview/window.py:55
+#: vsdview/window.py:72 vsdview/window.py:167
+msgid "Export as PDF"
+msgstr ""
+
+#: vsdview/window.py:73 vsdview/window.py:168
+msgid "Export as Text"
+msgstr ""
+
+#: vsdview/window.py:74
+msgid "Export"
+msgstr ""
+
+#: vsdview/window.py:76 vsdview/window.py:165
+msgid "Copy Text"
+msgstr ""
+
+#: vsdview/window.py:77
+msgid "Toggle Dark Theme"
+msgstr ""
+
+#: vsdview/window.py:78
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+#: vsdview/window.py:79
 msgid "About"
 msgstr ""
 
-#: vsdview/window.py:56
+#: vsdview/window.py:80
 msgid "Quit"
 msgstr ""
 
-#: vsdview/window.py:81 vsdview/window.py:120
+#: vsdview/window.py:136 vsdview/window.py:264
 msgid "No file loaded"
 msgstr ""
 
-#: vsdview/window.py:125
+#: vsdview/window.py:229
+#, python-format
+msgid "%d match(es) found"
+msgstr ""
+
+#: vsdview/window.py:261
+msgid "Page"
+msgstr ""
+
+#: vsdview/window.py:269
 msgid "Visio files"
 msgstr ""
 
-#: vsdview/window.py:149
+#: vsdview/window.py:291
 msgid "Conversion failed"
 msgstr ""
 
-#: vsdview/window.py:156
+#: vsdview/window.py:296
 msgid "No SVG output produced."
 msgstr ""
 
-#: vsdview/window.py:207
+#: vsdview/window.py:394 vsdview/window.py:421 vsdview/window.py:477
 msgid "No file loaded to export."
 msgstr ""
 
-#: vsdview/window.py:262
+#: vsdview/window.py:528
 msgid "Error"
 msgstr ""
 
-#: vsdview/window.py:265
+#: vsdview/window.py:531
 msgid "OK"
 msgstr ""

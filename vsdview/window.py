@@ -12,7 +12,16 @@ gi.require_version("Rsvg", "2.0")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Rsvg
 
-from vsdview.converter import convert_vsd_to_svg, export_to_png
+from vsdview.converter import (
+    ALL_EXTENSIONS,
+    STENCIL_EXTENSIONS,
+    convert_vsd_to_svg,
+    convert_vsd_page_to_svg,
+    export_to_png,
+    export_to_pdf,
+    extract_all_text,
+    get_page_info,
+)
 
 _ = gettext.gettext
 
@@ -26,42 +35,78 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._svg_handle = None
         self._current_file = None
         self._zoom_level = 1.0
-        self._svg_dir = None  # keep converted SVGs alive
+        self._svg_dir = None
+        self._svg_files = []  # all page SVGs
+        self._current_page = 0
+        self._page_info = []  # page metadata with shapes
+        self._search_query = ""
 
-        # Layout
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(box)
+        # Main layout
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.set_content(main_box)
 
         # Header bar
         header = Adw.HeaderBar()
-        box.append(header)
+        main_box.append(header)
 
         open_btn = Gtk.Button(icon_name="document-open-symbolic")
         open_btn.set_tooltip_text(_("Open Visio file"))
         open_btn.connect("clicked", lambda *_: self.show_open_dialog())
         header.pack_start(open_btn)
 
+        # Search button
+        self._search_button = Gtk.ToggleButton(icon_name="edit-find-symbolic")
+        self._search_button.set_tooltip_text(_("Find text"))
+        self._search_button.connect("toggled", self._on_search_toggled)
+        header.pack_start(self._search_button)
+
         # Hamburger menu
         menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu = Gio.Menu()
 
-        # Recent files submenu
         self._recent_menu = Gio.Menu()
         menu.append_submenu(_("Recent Files"), self._recent_menu)
 
+        export_section = Gio.Menu()
+        export_section.append(_("Export as PNG"), "app.export-png")
+        export_section.append(_("Export as PDF"), "app.export-pdf")
+        export_section.append(_("Export as Text"), "app.export-text")
+        menu.append_section(_("Export"), export_section)
+
+        menu.append(_("Copy Text"), "app.copy-text")
         menu.append(_("Toggle Dark Theme"), "app.toggle-theme")
         menu.append(_("Keyboard Shortcuts"), "app.show-shortcuts")
-        menu.append(_("Export as PNG"), "app.export-png")
         menu.append(_("About"), "app.about")
         menu.append(_("Quit"), "app.quit")
         menu_btn.set_menu_model(menu)
         header.pack_end(menu_btn)
 
+        # Search bar
+        self._search_bar = Gtk.SearchBar()
+        self._search_entry = Gtk.SearchEntry()
+        self._search_entry.set_hexpand(True)
+        self._search_entry.connect("search-changed", self._on_search_changed)
+        self._search_entry.connect("stop-search", self._on_search_stop)
+        clamp = Adw.Clamp(maximum_size=500)
+        clamp.set_child(self._search_entry)
+        self._search_bar.set_child(clamp)
+        self._search_bar.connect_entry(self._search_entry)
+        self._search_bar.set_search_mode(False)
+        main_box.append(self._search_bar)
+
+        # Search results label
+        self._search_results_label = Gtk.Label(label="")
+        self._search_results_label.set_xalign(0)
+        self._search_results_label.add_css_class("caption")
+        self._search_results_label.set_margin_start(8)
+        self._search_results_label.set_visible(False)
+        main_box.append(self._search_results_label)
+
         # Scrolled window for drawing area
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
-        box.append(scrolled)
+        main_box.append(scrolled)
 
         # Drawing area
         self._drawing_area = Gtk.DrawingArea()
@@ -77,6 +122,16 @@ class VSDViewWindow(Adw.ApplicationWindow):
         scroll_ctrl.connect("scroll", self._on_scroll_zoom)
         self._drawing_area.add_controller(scroll_ctrl)
 
+        # Right-click context menu
+        self._setup_context_menu()
+
+        # Page tabs (Gtk.Notebook at bottom, hidden by default)
+        self._notebook = Gtk.Notebook()
+        self._notebook.set_show_tabs(True)
+        self._notebook.set_visible(False)
+        self._notebook.connect("switch-page", self._on_page_switched)
+        main_box.append(self._notebook)
+
         # Status bar
         self._status_bar = Gtk.Label(label=_("No file loaded"))
         self._status_bar.set_xalign(0)
@@ -85,15 +140,102 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._status_bar.set_margin_end(8)
         self._status_bar.set_margin_top(4)
         self._status_bar.set_margin_bottom(4)
-        box.append(self._status_bar)
+        main_box.append(self._status_bar)
 
         # Drag and drop
         drop_target = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
 
-        # Populate recent files menu
+        # Key controller for Escape to close search
+        key_ctrl = Gtk.EventControllerKey.new()
+        key_ctrl.connect("key-pressed", self._on_key_pressed)
+        self.add_controller(key_ctrl)
+
         self._update_recent_menu()
+
+    def _setup_context_menu(self):
+        """Set up right-click context menu."""
+        gesture = Gtk.GestureClick.new()
+        gesture.set_button(3)  # right click
+        gesture.connect("pressed", self._on_right_click)
+        self._drawing_area.add_controller(gesture)
+
+        self._context_menu = Gio.Menu()
+        self._context_menu.append(_("Copy Text"), "app.copy-text")
+        self._context_menu.append(_("Export as PNG"), "app.export-png")
+        self._context_menu.append(_("Export as PDF"), "app.export-pdf")
+        self._context_menu.append(_("Export as Text"), "app.export-text")
+
+        self._popover = Gtk.PopoverMenu.new_from_model(self._context_menu)
+        self._popover.set_parent(self._drawing_area)
+        self._popover.set_has_arrow(False)
+
+    def _on_right_click(self, gesture, n_press, x, y):
+        rect = Gdk.Rectangle()
+        rect.x = int(x)
+        rect.y = int(y)
+        rect.width = 1
+        rect.height = 1
+        self._popover.set_pointing_to(rect)
+        self._popover.popup()
+
+    # --- Search ---
+
+    def _on_key_pressed(self, controller, keyval, keycode, state):
+        if keyval == Gdk.KEY_Escape and self._search_bar.get_search_mode():
+            self._close_search()
+            return True
+        return False
+
+    def toggle_search(self):
+        """Toggle search bar visibility."""
+        if self._search_bar.get_search_mode():
+            self._close_search()
+        else:
+            self._search_bar.set_search_mode(True)
+            self._search_button.set_active(True)
+            self._search_entry.grab_focus()
+
+    def _close_search(self):
+        self._search_bar.set_search_mode(False)
+        self._search_button.set_active(False)
+        self._search_query = ""
+        self._search_results_label.set_visible(False)
+        self._drawing_area.queue_draw()
+
+    def _on_search_toggled(self, button):
+        active = button.get_active()
+        self._search_bar.set_search_mode(active)
+        if active:
+            self._search_entry.grab_focus()
+        else:
+            self._close_search()
+
+    def _on_search_changed(self, entry):
+        self._search_query = entry.get_text().strip().lower()
+        if not self._search_query:
+            self._search_results_label.set_visible(False)
+            return
+
+        # Count matches on current page
+        matches = 0
+        if self._page_info and self._current_page < len(self._page_info):
+            for shape in self._page_info[self._current_page].get("shapes", []):
+                if self._search_query in shape.get("text", "").lower():
+                    matches += 1
+
+        self._search_results_label.set_label(
+            _("%d match(es) found") % matches
+        )
+        self._search_results_label.set_visible(True)
+        # Redraw would highlight matches if we had shape-level rendering
+        # For now the search result count is shown
+
+    def _on_search_stop(self, entry):
+        self._close_search()
+
+    # --- Recent files ---
 
     def _update_recent_menu(self):
         self._recent_menu.remove_all()
@@ -102,12 +244,11 @@ class VSDViewWindow(Adw.ApplicationWindow):
             return
         for path in app.recent.get_files():
             basename = os.path.basename(path)
-            # Use a detailed action with the path
-            item = Gio.MenuItem.new(basename, None)
             action_name = f"win.open-recent-{hash(path) & 0xFFFFFFFF}"
             action = Gio.SimpleAction.new(action_name.replace("win.", ""), None)
             action.connect("activate", lambda a, p, fp=path: self.open_file(fp))
             self.add_action(action)
+            item = Gio.MenuItem.new(basename, None)
             item.set_action_and_target_value(action_name, None)
             self._recent_menu.append_item(item)
 
@@ -115,7 +256,10 @@ class VSDViewWindow(Adw.ApplicationWindow):
         if self._current_file:
             basename = os.path.basename(self._current_file)
             zoom_pct = int(self._zoom_level * 100)
-            self._status_bar.set_label(f"{basename} — {zoom_pct}%")
+            page_info = ""
+            if len(self._svg_files) > 1:
+                page_info = f" — {_('Page')} {self._current_page + 1}/{len(self._svg_files)}"
+            self._status_bar.set_label(f"{basename}{page_info} — {zoom_pct}%")
         else:
             self._status_bar.set_label(_("No file loaded"))
 
@@ -123,8 +267,8 @@ class VSDViewWindow(Adw.ApplicationWindow):
         dialog = Gtk.FileDialog()
         file_filter = Gtk.FileFilter()
         file_filter.set_name(_("Visio files"))
-        file_filter.add_pattern("*.vsdx")
-        file_filter.add_pattern("*.vsd")
+        for ext in sorted(ALL_EXTENSIONS):
+            file_filter.add_pattern(f"*{ext}")
         filters = Gio.ListStore.new(Gtk.FileFilter)
         filters.append(file_filter)
         dialog.set_filters(filters)
@@ -140,15 +284,11 @@ class VSDViewWindow(Adw.ApplicationWindow):
 
     def open_file(self, path):
         """Convert a Visio file to SVG and display it."""
-
         tmpdir = tempfile.mkdtemp(prefix="vsdview_")
         try:
             svg_files = convert_vsd_to_svg(path, tmpdir)
         except RuntimeError as e:
-            self._send_notification(
-                _("Conversion failed"),
-                str(e),
-            )
+            self._send_notification(_("Conversion failed"), str(e))
             self._show_error(str(e))
             return
 
@@ -156,14 +296,24 @@ class VSDViewWindow(Adw.ApplicationWindow):
             self._show_error(_("No SVG output produced."))
             return
 
-        self._svg_dir = tmpdir  # prevent cleanup
-        self._svg_handle = Rsvg.Handle.new_from_file(svg_files[0])
+        self._svg_dir = tmpdir
+        self._svg_files = svg_files
         self._current_file = path
+        self._current_page = 0
         self._zoom_level = 1.0
+        self._search_query = ""
+
+        # Load page info for search/copy
+        self._page_info = get_page_info(path)
+
+        # Load first page
+        self._load_page(0)
+
+        # Setup page tabs
+        self._setup_page_tabs()
 
         self.set_title(f"VSDView — {os.path.basename(path)}")
         self._update_status()
-        self._drawing_area.queue_draw()
 
         # Add to recent files
         app = self.get_application()
@@ -171,8 +321,129 @@ class VSDViewWindow(Adw.ApplicationWindow):
             app.recent.add_file(path)
             self._update_recent_menu()
 
+    def _load_page(self, page_index: int):
+        """Load a specific page SVG."""
+        if page_index < 0 or page_index >= len(self._svg_files):
+            return
+        self._current_page = page_index
+        self._svg_handle = Rsvg.Handle.new_from_file(self._svg_files[page_index])
+        self._update_status()
+        self._drawing_area.queue_draw()
+
+    def _setup_page_tabs(self):
+        """Setup page tabs in notebook."""
+        # Remove old pages
+        while self._notebook.get_n_pages() > 0:
+            self._notebook.remove_page(0)
+
+        if len(self._svg_files) <= 1:
+            self._notebook.set_visible(False)
+            return
+
+        self._notebook.set_visible(True)
+
+        # Block signal while populating
+        self._notebook.handler_block_by_func(self._on_page_switched)
+
+        for i in range(len(self._svg_files)):
+            if i < len(self._page_info):
+                name = self._page_info[i].get("name", f"Page {i + 1}")
+            else:
+                name = f"Page {i + 1}"
+            label = Gtk.Label(label=name)
+            # Notebook needs a child widget per page (just a placeholder)
+            placeholder = Gtk.Box()
+            self._notebook.append_page(placeholder, label)
+
+        self._notebook.set_current_page(0)
+        self._notebook.handler_unblock_by_func(self._on_page_switched)
+
+    def _on_page_switched(self, notebook, page, page_num):
+        if page_num != self._current_page:
+            self._load_page(page_num)
+
+    # --- Copy text ---
+
+    def copy_text(self):
+        """Copy all text from current page to clipboard."""
+        if not self._current_file:
+            return
+
+        text = ""
+        if self._page_info and self._current_page < len(self._page_info):
+            texts = []
+            for shape in self._page_info[self._current_page].get("shapes", []):
+                t = shape.get("text", "").strip()
+                if t:
+                    texts.append(t)
+            text = "\n".join(texts)
+
+        if not text:
+            # Fallback: extract all text
+            text = extract_all_text(self._current_file)
+
+        if text:
+            clipboard = self.get_clipboard()
+            clipboard.set(text)
+
+    # --- Export ---
+
+    def export_text(self):
+        """Export all text to a .txt file."""
+        if not self._current_file:
+            self._show_error(_("No file loaded to export."))
+            return
+
+        dialog = Gtk.FileDialog()
+        basename = os.path.splitext(os.path.basename(self._current_file))[0]
+        dialog.set_initial_name(f"{basename}.txt")
+        dialog.save(self, None, self._on_export_text_chosen)
+
+    def _on_export_text_chosen(self, dialog, result):
+        try:
+            file = dialog.save_finish(result)
+            if not file:
+                return
+            output_path = file.get_path()
+        except Exception:
+            return
+
+        text = extract_all_text(self._current_file)
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            self._show_error(str(e))
+
+    def export_pdf(self):
+        """Export current page SVG as PDF."""
+        if not self._svg_handle or not self._svg_files:
+            self._show_error(_("No file loaded to export."))
+            return
+
+        dialog = Gtk.FileDialog()
+        basename = os.path.splitext(os.path.basename(self._current_file))[0]
+        dialog.set_initial_name(f"{basename}.pdf")
+        dialog.save(self, None, self._on_export_pdf_chosen)
+
+    def _on_export_pdf_chosen(self, dialog, result):
+        try:
+            file = dialog.save_finish(result)
+            if not file:
+                return
+            output_path = file.get_path()
+        except Exception:
+            return
+
+        svg_path = self._svg_files[self._current_page]
+        try:
+            export_to_pdf(svg_path, output_path)
+        except RuntimeError as e:
+            self._show_error(str(e))
+
+    # --- Core rendering ---
+
     def refresh(self):
-        """Re-convert and reload the current file."""
         if self._current_file and os.path.exists(self._current_file):
             self.open_file(self._current_file)
 
@@ -202,16 +473,15 @@ class VSDViewWindow(Adw.ApplicationWindow):
         return False
 
     def export_png(self):
-        """Export current SVG as PNG."""
         if not self._svg_handle:
             self._show_error(_("No file loaded to export."))
             return
 
         dialog = Gtk.FileDialog()
         dialog.set_initial_name("export.png")
-        dialog.save(self, None, self._on_export_chosen)
+        dialog.save(self, None, self._on_export_png_chosen)
 
-    def _on_export_chosen(self, dialog, result):
+    def _on_export_png_chosen(self, dialog, result):
         try:
             file = dialog.save_finish(result)
             if not file:
@@ -220,17 +490,11 @@ class VSDViewWindow(Adw.ApplicationWindow):
         except Exception:
             return
 
-        # Find the SVG file to export from
-        if self._svg_dir and self._current_file:
-            from pathlib import Path
-
-            basename = Path(self._current_file).stem
-            svg_files = sorted(Path(self._svg_dir).glob(f"{basename}*.svg"))
-            if svg_files:
-                try:
-                    export_to_png(str(svg_files[0]), output_path)
-                except RuntimeError as e:
-                    self._show_error(str(e))
+        if self._svg_files and self._current_page < len(self._svg_files):
+            try:
+                export_to_png(self._svg_files[self._current_page], output_path)
+            except RuntimeError as e:
+                self._show_error(str(e))
 
     def _on_draw(self, area, cr, width, height):
         if not self._svg_handle:
@@ -242,7 +506,6 @@ class VSDViewWindow(Adw.ApplicationWindow):
         viewport.width = width * self._zoom_level
         viewport.height = height * self._zoom_level
 
-        # Set drawing area size for scrolling when zoomed
         self._drawing_area.set_content_width(int(width * self._zoom_level))
         self._drawing_area.set_content_height(int(height * self._zoom_level))
 
@@ -251,9 +514,12 @@ class VSDViewWindow(Adw.ApplicationWindow):
     def _on_drop(self, target, value, x, y):
         if isinstance(value, Gio.File):
             path = value.get_path()
-            if path and (path.endswith(".vsdx") or path.endswith(".vsd")):
-                self.open_file(path)
-                return True
+            if path:
+                from pathlib import Path as P
+                ext = P(path).suffix.lower()
+                if ext in ALL_EXTENSIONS:
+                    self.open_file(path)
+                    return True
         return False
 
     def _show_error(self, message):
@@ -266,7 +532,6 @@ class VSDViewWindow(Adw.ApplicationWindow):
         dialog.present()
 
     def _send_notification(self, title, body):
-        """Send a desktop notification."""
         app = self.get_application()
         if not app:
             return
