@@ -7,8 +7,10 @@ Backend priority:
 Author: Daniel Nylander <daniel@danielnylander.se>
 """
 
+import base64
 import gettext
 import math
+import mimetypes
 import os
 import re
 import shutil
@@ -80,6 +82,26 @@ _LINE_PATTERNS = {
 
 # Inches to SVG pixels conversion
 _INCH_TO_PX = 72.0
+
+# Arrow size lookup (BeginArrowSize/EndArrowSize 0-6 -> scale factor)
+_ARROW_SIZES = {0: 0.5, 1: 0.65, 2: 0.8, 3: 1.0, 4: 1.5, 5: 2.0, 6: 2.5}
+
+# MIME types for embedded images
+_IMAGE_MIMETYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".emf": "image/x-emf",
+    ".wmf": "image/x-wmf",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".svg": "image/svg+xml",
+}
+
+# Relationship namespace
+_RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 def _lighten_color(hex_color: str, factor: float = 0.7) -> str:
@@ -215,6 +237,160 @@ def _escape_xml(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Embedded image support
+# ---------------------------------------------------------------------------
+
+def _extract_media(zf: zipfile.ZipFile) -> dict[str, bytes]:
+    """Extract all files from visio/media/ in the ZIP.
+
+    Returns {filename: bytes} e.g. {"image1.png": b"..."}
+    """
+    media = {}
+    for name in zf.namelist():
+        if name.startswith("visio/media/"):
+            fname = name.split("/")[-1]
+            if fname:
+                try:
+                    media[fname] = zf.read(name)
+                except (KeyError, zipfile.BadZipFile):
+                    pass
+    return media
+
+
+def _parse_rels(zf: zipfile.ZipFile, page_file: str) -> dict[str, str]:
+    """Parse relationship file for a page to map rId -> target path.
+
+    For visio/pages/page1.xml, the rels file is
+    visio/pages/_rels/page1.xml.rels
+    """
+    page_dir = os.path.dirname(page_file)
+    page_basename = os.path.basename(page_file)
+    rels_path = f"{page_dir}/_rels/{page_basename}.rels"
+
+    rels = {}
+    try:
+        rels_xml = zf.read(rels_path)
+        root = ET.fromstring(rels_xml)
+        for rel in root.findall(f"{{{_RELS_NS}}}Relationship"):
+            rid = rel.get("Id", "")
+            target = rel.get("Target", "")
+            if rid and target:
+                rels[rid] = target
+    except (KeyError, ET.ParseError):
+        pass
+    return rels
+
+
+def _image_to_data_uri(data: bytes, filename: str) -> str:
+    """Convert image bytes to a base64 data URI."""
+    ext = os.path.splitext(filename)[1].lower()
+    mime = _IMAGE_MIMETYPES.get(ext, "image/png")
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
+def _save_image_file(data: bytes, filename: str, output_dir: str) -> str:
+    """Save image to output directory and return relative filename.
+
+    For large images, saves to file instead of embedding as data URI
+    to avoid XML parser buffer limits in rsvg.
+    """
+    dest = os.path.join(output_dir, filename)
+    with open(dest, "wb") as f:
+        f.write(data)
+    return filename  # Relative path for SVG href
+
+
+def _parse_foreign_data(shape_elem: ET.Element) -> dict | None:
+    """Parse ForeignData element from a shape.
+
+    Returns {"type": "bitmap"|"metafile", "data": base64_str, "rel_id": rIdN}
+    or None if no foreign data.
+    """
+    fd = shape_elem.find(f"{_VTAG}ForeignData")
+    if fd is None:
+        return None
+
+    info = {
+        "foreign_type": fd.get("ForeignType", ""),
+        "compression": fd.get("CompressionType", ""),
+        "data": None,
+        "rel_id": None,
+    }
+
+    # Check for Rel element (can be in Visio namespace or r: namespace)
+    rel_elem = fd.find(f"{_VTAG}Rel")
+    if rel_elem is None:
+        rel_elem = fd.find(f"{{{_NS['r']}}}Rel")
+    if rel_elem is not None:
+        # The r:id attribute may use full namespace
+        info["rel_id"] = rel_elem.get(f"{{{_NS['r']}}}id", "")
+        if not info["rel_id"]:
+            info["rel_id"] = rel_elem.get("r:id", "")
+        if not info["rel_id"]:
+            for attr_name, attr_val in rel_elem.attrib.items():
+                if attr_name.endswith("}id") or attr_name == "id":
+                    info["rel_id"] = attr_val
+                    break
+    else:
+        # Inline data
+        text = fd.text
+        if text and text.strip():
+            info["data"] = text.strip()
+
+    return info
+
+
+# ---------------------------------------------------------------------------
+# Arrow marker SVG generation
+# ---------------------------------------------------------------------------
+
+def _arrow_marker_defs(used_markers: set[str]) -> list[str]:
+    """Generate SVG <defs> for arrow markers.
+
+    used_markers: set of marker IDs like "arrow_end_3", "arrow_start_2"
+    """
+    if not used_markers:
+        return []
+
+    lines = ["<defs>"]
+    for marker_id in sorted(used_markers):
+        # Parse: arrow_{start|end}_{size}_{color}
+        parts = marker_id.split("_", 3)
+        direction = parts[1] if len(parts) > 1 else "end"
+        size_idx = int(parts[2]) if len(parts) > 2 else 3
+        color = f"#{parts[3]}" if len(parts) > 3 else "#333333"
+
+        scale = _ARROW_SIZES.get(size_idx, 1.0)
+        marker_w = 10 * scale
+        marker_h = 7 * scale
+
+        if direction == "start":
+            # Reverse triangle for start
+            lines.append(
+                f'<marker id="{marker_id}" markerWidth="{marker_w:.1f}" '
+                f'markerHeight="{marker_h:.1f}" refX="0" refY="{marker_h/2:.1f}" '
+                f'orient="auto" markerUnits="strokeWidth">'
+                f'<polygon points="{marker_w:.1f} 0, 0 {marker_h/2:.1f}, '
+                f'{marker_w:.1f} {marker_h:.1f}" fill="{color}"/>'
+                f'</marker>'
+            )
+        else:
+            # Forward triangle for end
+            lines.append(
+                f'<marker id="{marker_id}" markerWidth="{marker_w:.1f}" '
+                f'markerHeight="{marker_h:.1f}" refX="{marker_w:.1f}" '
+                f'refY="{marker_h/2:.1f}" orient="auto" markerUnits="strokeWidth">'
+                f'<polygon points="0 0, {marker_w:.1f} {marker_h/2:.1f}, '
+                f'0 {marker_h:.1f}" fill="{color}"/>'
+                f'</marker>'
+            )
+
+    lines.append("</defs>")
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Master shape parsing
 # ---------------------------------------------------------------------------
 
@@ -281,6 +457,7 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
         "sub_shapes": [],
         "controls": {},      # Row_N -> {X, Y, ...}
         "connections": {},    # IX -> {X, Y, ...}
+        "foreign_data": None, # ForeignData info for embedded images
     }
 
     # Parse top-level cells
@@ -348,6 +525,11 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
     if shapes_container is not None:
         for sub_shape in shapes_container.findall(f"{_VTAG}Shape"):
             sd["sub_shapes"].append(_parse_single_shape(sub_shape))
+
+    # Parse ForeignData (embedded images)
+    fd_info = _parse_foreign_data(shape_elem)
+    if fd_info:
+        sd["foreign_data"] = fd_info
 
     return sd
 
@@ -788,9 +970,19 @@ def _compute_transform(shape: dict, page_h: float) -> str:
 
 def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                        parent_master_id: str = "",
-                       _depth: int = 0) -> list[str]:
+                       _depth: int = 0,
+                       media: dict | None = None,
+                       page_rels: dict | None = None,
+                       used_markers: set | None = None,
+                       output_dir: str | None = None) -> list[str]:
     """Render a single shape as SVG elements. Returns list of SVG strings."""
     shape = _merge_shape_with_master(shape, masters, parent_master_id)
+    if media is None:
+        media = {}
+    if page_rels is None:
+        page_rels = {}
+    if used_markers is None:
+        used_markers = set()
 
     lines = []
 
@@ -901,7 +1093,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         )
         for sub in shape.get("sub_shapes", []):
             lines.extend(_render_shape_svg(
-                sub, group_h, masters, group_master_id, _depth + 1))
+                sub, group_h, masters, group_master_id, _depth + 1,
+                media, page_rels, used_markers, output_dir))
         lines.append('</g>')
         # Render text for the group itself, or shape name as label
         if shape["text"]:
@@ -946,17 +1139,55 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             )
 
     elif is_1d:
-        # 1D shape without geometry — draw a simple line
+        # 1D shape — check for geometry (routed connectors) first
         bx = _safe_float(begin_x) * _INCH_TO_PX
         by = (page_h - _safe_float(begin_y)) * _INCH_TO_PX
         ex_px = _safe_float(end_x) * _INCH_TO_PX
         ey_px = (page_h - _safe_float(end_y)) * _INCH_TO_PX
-        lines.append(
-            f'<line x1="{bx:.2f}" y1="{by:.2f}" x2="{ex_px:.2f}" y2="{ey_px:.2f}" '
-            f'stroke="{stroke}" stroke-width="{stroke_width:.2f}"'
-            + (f' stroke-dasharray="{dash_array}"' if dash_array else '')
-            + '/>'
-        )
+
+        # Arrow markers
+        begin_arrow = int(_safe_float(_get_cell_val(shape, "BeginArrow", "0")))
+        end_arrow = int(_safe_float(_get_cell_val(shape, "EndArrow", "0")))
+        begin_arrow_size = int(_safe_float(_get_cell_val(shape, "BeginArrowSize", "2")))
+        end_arrow_size = int(_safe_float(_get_cell_val(shape, "EndArrowSize", "2")))
+        marker_color = stroke.lstrip("#") if stroke != "none" else "333333"
+        marker_attrs = ""
+        if begin_arrow > 0:
+            mid = f"arrow_start_{begin_arrow_size}_{marker_color}"
+            used_markers.add(mid)
+            marker_attrs += f' marker-start="url(#{mid})"'
+        if end_arrow > 0:
+            mid = f"arrow_end_{end_arrow_size}_{marker_color}"
+            used_markers.add(mid)
+            marker_attrs += f' marker-end="url(#{mid})"'
+
+        if has_geometry:
+            # Routed connector — render geometry path instead of straight line
+            master_w = shape.get("_master_w", 0.0)
+            master_h = shape.get("_master_h", 0.0)
+            for geo in shape["geometry"]:
+                path_d = _geometry_to_path(geo, w_inch, h_inch, master_w, master_h)
+                if not path_d:
+                    continue
+                geo_stroke = stroke
+                if geo.get("no_line"):
+                    geo_stroke = "none"
+                lines.append(
+                    f'<path d="{path_d}" fill="none" stroke="{geo_stroke}" '
+                    f'stroke-width="{stroke_width:.2f}"'
+                    + (f' stroke-dasharray="{dash_array}"' if dash_array else '')
+                    + marker_attrs
+                    + f' transform="{transform}"/>'
+                )
+        else:
+            # Simple straight line
+            lines.append(
+                f'<line x1="{bx:.2f}" y1="{by:.2f}" x2="{ex_px:.2f}" y2="{ey_px:.2f}" '
+                f'stroke="{stroke}" stroke-width="{stroke_width:.2f}"'
+                + (f' stroke-dasharray="{dash_array}"' if dash_array else '')
+                + marker_attrs
+                + '/>'
+            )
 
     else:
         # No geometry, no 1D — fall back to rectangle only if shape has
@@ -966,6 +1197,50 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             lines.append(
                 f'<rect x="0" y="0" width="{w_px:.2f}" height="{h_px:.2f}" '
                 f'{style_str}{rx_attr} transform="{transform}"/>'
+            )
+
+    # --- Embedded image rendering ---
+    fd = shape.get("foreign_data")
+    if fd and media:
+        img_href = None
+        if fd.get("rel_id") and fd["rel_id"] in page_rels:
+            target = page_rels[fd["rel_id"]]
+            img_name = target.split("/")[-1]
+            if img_name in media:
+                if output_dir:
+                    img_href = _save_image_file(media[img_name], img_name, output_dir)
+                else:
+                    img_href = _image_to_data_uri(media[img_name], img_name)
+        elif fd.get("data"):
+            ext_map = {"PNG": ".png", "JPEG": ".jpeg", "BMP": ".bmp",
+                       "GIF": ".gif", "TIFF": ".tiff"}
+            comp = fd.get("compression", "PNG").upper()
+            fake_ext = ext_map.get(comp, ".png")
+            try:
+                raw = base64.b64decode(fd["data"])
+                fname = f"inline_{shape['id']}{fake_ext}"
+                if output_dir:
+                    img_href = _save_image_file(raw, fname, output_dir)
+                else:
+                    img_href = _image_to_data_uri(raw, fname)
+            except Exception:
+                pass
+
+        if img_href:
+            img_w = _get_cell_float(shape, "ImgWidth") or w_inch
+            img_h = _get_cell_float(shape, "ImgHeight") or h_inch
+            img_off_x = _get_cell_float(shape, "ImgOffsetX")
+            img_off_y = _get_cell_float(shape, "ImgOffsetY")
+            img_w_px = img_w * _INCH_TO_PX
+            img_h_px = img_h * _INCH_TO_PX
+            img_x_px = img_off_x * _INCH_TO_PX
+            img_y_px = img_off_y * _INCH_TO_PX
+            lines.append(
+                f'<image x="{img_x_px:.2f}" y="{img_y_px:.2f}" '
+                f'width="{img_w_px:.2f}" height="{img_h_px:.2f}" '
+                f'href="{img_href}" '
+                f'preserveAspectRatio="xMidYMid meet" '
+                f'transform="{transform}"/>'
             )
 
     # --- Text rendering ---
@@ -1024,11 +1299,36 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     fs = ' font-style="italic"' if is_italic else ""
     td = ' text-decoration="underline"' if is_underline else ""
 
-    # Split text into lines
+    # Text wrapping: parse TxtWidth for max text width
+    txt_width = _get_cell_float(shape, "TxtWidth")
+    txt_width_px = txt_width * _INCH_TO_PX if txt_width > 0 else w_px
+
+    # Split text into lines, then wrap long lines
     text_lines = text.split("\n")
 
+    # Simple word-wrap: estimate chars per line from font size
+    if txt_width_px > 0 and font_size > 0:
+        avg_char_w = font_size * 0.55  # Approximate average char width
+        max_chars = max(4, int(txt_width_px / avg_char_w))
+        wrapped_lines = []
+        for tline in text_lines:
+            if len(tline) <= max_chars:
+                wrapped_lines.append(tline)
+            else:
+                words = tline.split()
+                current = ""
+                for word in words:
+                    if current and len(current) + 1 + len(word) > max_chars:
+                        wrapped_lines.append(current)
+                        current = word
+                    else:
+                        current = current + " " + word if current else word
+                if current:
+                    wrapped_lines.append(current)
+        text_lines = wrapped_lines
+
     if len(text_lines) == 1:
-        escaped = _escape_xml(text)
+        escaped = _escape_xml(text_lines[0])
         lines.append(
             f'<text x="{tx:.2f}" y="{ty:.2f}" '
             f'text-anchor="{text_anchor}" dominant-baseline="central" '
@@ -1278,7 +1578,12 @@ def _parse_vsdx_shapes(page_xml: bytes, master_texts: dict | None = None,
 
 def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
                    masters: dict | None = None,
-                   connects: list[dict] | None = None) -> str:
+                   connects: list[dict] | None = None,
+                   media: dict | None = None,
+                   page_rels: dict | None = None,
+                   bg_shapes: list[dict] | None = None,
+                   bg_connects: list[dict] | None = None,
+                   output_dir: str | None = None) -> str:
     """Generate SVG string from parsed shapes."""
     ET.register_namespace("", "http://www.w3.org/2000/svg")
     ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
@@ -1297,9 +1602,33 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
 
     if masters is None:
         masters = {}
+    if media is None:
+        media = {}
+    if page_rels is None:
+        page_rels = {}
 
+    used_markers: set[str] = set()
+
+    # Render background page shapes first (behind foreground)
+    if bg_shapes:
+        svg_lines.append('<!-- Background page -->')
+        for s in bg_shapes:
+            svg_elements = _render_shape_svg(
+                s, page_h, masters, media=media,
+                page_rels=page_rels, used_markers=used_markers,
+                output_dir=output_dir)
+            svg_lines.extend(svg_elements)
+        if bg_connects:
+            bg_index = _build_shape_index(bg_shapes)
+            svg_lines.extend(_render_connections_svg(
+                bg_connects, bg_index, page_h, masters))
+
+    # Render foreground shapes
     for s in shapes:
-        svg_elements = _render_shape_svg(s, page_h, masters)
+        svg_elements = _render_shape_svg(
+            s, page_h, masters, media=media,
+            page_rels=page_rels, used_markers=used_markers,
+            output_dir=output_dir)
         svg_lines.extend(svg_elements)
 
     # Render connections
@@ -1309,6 +1638,14 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
         svg_lines.extend(conn_lines)
 
     svg_lines.append("</svg>")
+
+    # Insert marker defs after the opening <svg> tag if needed
+    if used_markers:
+        marker_lines = _arrow_marker_defs(used_markers)
+        # Insert after the background rect (index 3)
+        for j, ml in enumerate(marker_lines):
+            svg_lines.insert(3 + j, ml)
+
     return "\n".join(svg_lines)
 
 
@@ -1455,6 +1792,39 @@ def _get_page_files(zf: zipfile.ZipFile) -> list[str]:
     return page_files
 
 
+def _parse_background_pages(zf: zipfile.ZipFile) -> dict[int, int]:
+    """Parse pages.xml to find background page references.
+
+    Returns {page_index: background_page_index} (0-based).
+    """
+    bg_map = {}
+    try:
+        pages_xml = zf.read("visio/pages/pages.xml")
+        root = ET.fromstring(pages_xml)
+        pages = root.findall(f"{_VTAG}Page")
+
+        # Build page ID -> index map
+        page_id_to_idx = {}
+        for i, page in enumerate(pages):
+            pid = page.get("ID", "")
+            if pid:
+                page_id_to_idx[pid] = i
+
+        # Find BackPage references
+        for i, page in enumerate(pages):
+            page_sheet = page.find(f"{_VTAG}PageSheet")
+            if page_sheet is None:
+                continue
+            for cell in page_sheet.findall(f"{_VTAG}Cell"):
+                if cell.get("N") == "BackPage":
+                    back_id = cell.get("V", "")
+                    if back_id and back_id in page_id_to_idx:
+                        bg_map[i] = page_id_to_idx[back_id]
+    except (KeyError, ET.ParseError):
+        pass
+    return bg_map
+
+
 def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
     """Parse .vsdx (ZIP+XML) and generate SVG directly."""
     if not zipfile.is_zipfile(input_path):
@@ -1465,8 +1835,13 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
 
     with zipfile.ZipFile(input_path, "r") as zf:
         masters = _parse_master_shapes(zf)
+        media = _extract_media(zf)
         page_files = _get_page_files(zf)
         all_dims = _parse_all_page_dimensions(zf)
+        bg_map = _parse_background_pages(zf)
+
+        # Pre-parse all pages for background composition
+        page_cache: dict[int, tuple] = {}  # idx -> (shapes, connects, page_rels)
 
         for i, page_file in enumerate(page_files):
             try:
@@ -1474,24 +1849,44 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
             except (KeyError, zipfile.BadZipFile):
                 continue
 
-            # Prefer dimensions from pages.xml, fall back to page XML
-            if i < len(all_dims):
-                page_w, page_h = all_dims[i]
-            else:
-                page_w, page_h = _parse_page_dimensions(page_xml)
             shapes = _parse_vsdx_shapes(page_xml, masters=masters)
-
-            if not shapes:
-                continue
-
-            # Parse connections
             try:
                 page_root = ET.fromstring(page_xml)
                 connects = _parse_connects(page_root)
             except ET.ParseError:
                 connects = []
 
-            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters, connects)
+            page_rels = _parse_rels(zf, page_file)
+            page_cache[i] = (shapes, connects, page_rels)
+
+        for i, page_file in enumerate(page_files):
+            if i not in page_cache:
+                continue
+
+            shapes, connects, page_rels = page_cache[i]
+            if not shapes:
+                continue
+
+            if i < len(all_dims):
+                page_w, page_h = all_dims[i]
+            else:
+                try:
+                    page_xml = zf.read(page_file)
+                    page_w, page_h = _parse_page_dimensions(page_xml)
+                except (KeyError, zipfile.BadZipFile):
+                    page_w, page_h = 8.5, 11.0
+
+            # Background page composition
+            bg_shapes = None
+            bg_connects = None
+            if i in bg_map:
+                bg_idx = bg_map[i]
+                if bg_idx in page_cache:
+                    bg_shapes, bg_connects, _ = page_cache[bg_idx]
+
+            svg_content = _shapes_to_svg(
+                shapes, page_w, page_h, masters, connects,
+                media, page_rels, bg_shapes, bg_connects, output_dir)
             svg_path = os.path.join(output_dir, f"{basename}_page{i + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
@@ -1589,14 +1984,16 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
     if ext not in ALL_EXTENSIONS:
         raise RuntimeError(_("Unsupported file format: %s") % ext)
 
-    svg_files = _convert_with_libvisio(input_path, output_dir)
-    if svg_files:
-        return svg_files
-
+    # For .vsdx files, prefer built-in parser (handles images, arrows,
+    # background pages). Fall back to libvisio only for .vsd/.vss.
     if ext in (".vsdx", ".vssx", ".vssm"):
         svg_files = _vsdx_to_svg(input_path, output_dir)
         if svg_files:
             return svg_files
+
+    svg_files = _convert_with_libvisio(input_path, output_dir)
+    if svg_files:
+        return svg_files
 
     if ext in (".vsd", ".vss"):
         raise RuntimeError(
@@ -1627,12 +2024,15 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
     if ext in (".vsdx", ".vssx", ".vssm") and zipfile.is_zipfile(input_path):
         with zipfile.ZipFile(input_path, "r") as zf:
             masters = _parse_master_shapes(zf)
+            media = _extract_media(zf)
             page_files = _get_page_files(zf)
             all_dims = _parse_all_page_dimensions(zf)
+            bg_map = _parse_background_pages(zf)
             if page_index >= len(page_files):
                 return None
 
-            page_xml = zf.read(page_files[page_index])
+            page_file = page_files[page_index]
+            page_xml = zf.read(page_file)
             if page_index < len(all_dims):
                 page_w, page_h = all_dims[page_index]
             else:
@@ -1647,7 +2047,25 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
             except ET.ParseError:
                 connects = []
 
-            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters, connects)
+            page_rels = _parse_rels(zf, page_file)
+
+            # Background page
+            bg_shapes = None
+            bg_connects = None
+            if page_index in bg_map:
+                bg_idx = bg_map[page_index]
+                if bg_idx < len(page_files):
+                    try:
+                        bg_xml = zf.read(page_files[bg_idx])
+                        bg_shapes = _parse_vsdx_shapes(bg_xml, masters=masters)
+                        bg_root = ET.fromstring(bg_xml)
+                        bg_connects = _parse_connects(bg_root)
+                    except (KeyError, ET.ParseError):
+                        pass
+
+            svg_content = _shapes_to_svg(
+                shapes, page_w, page_h, masters, connects,
+                media, page_rels, bg_shapes, bg_connects, output_dir)
             svg_path = os.path.join(output_dir, f"{basename}_page{page_index + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
