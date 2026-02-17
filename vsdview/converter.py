@@ -1,4 +1,4 @@
-"""Convert Visio files (.vsdx, .vsd, .vssx, .vss) to SVG.
+"""Convert Visio files (.vsdx, .vsd, .vstx, .vssx, .vss) to SVG.
 
 Backend priority:
 1. libvisio (vsd2xhtml) — lightweight, accurate
@@ -32,8 +32,11 @@ _VTAG = f"{{{_VNS}}}"
 
 # Supported file extensions
 VISIO_EXTENSIONS = {".vsd", ".vsdx", ".vsdm"}
+TEMPLATE_EXTENSIONS = {".vst", ".vstx", ".vstm"}
 STENCIL_EXTENSIONS = {".vss", ".vssx", ".vssm"}
-ALL_EXTENSIONS = VISIO_EXTENSIONS | STENCIL_EXTENSIONS
+ALL_EXTENSIONS = VISIO_EXTENSIONS | TEMPLATE_EXTENSIONS | STENCIL_EXTENSIONS
+# XML-based (ZIP) formats that use the built-in parser
+_XML_EXTENSIONS = {".vsdx", ".vsdm", ".vssx", ".vssm", ".vstx", ".vstm"}
 
 # Visio color index table (standard colors)
 _VISIO_COLORS = {
@@ -549,22 +552,46 @@ def _parse_master_shapes(zf: zipfile.ZipFile) -> dict[str, dict]:
     Returns {master_id: {shape_id: shape_dict, ...}, ...}
     Each shape_dict has: cells, geometry, text, char_formats, para_formats, sub_shapes
     """
-    # First, read masters.xml to map Master ID to file
-    master_map = {}  # Master ID -> master file number
+    # First, read masters.xml to map Master ID -> rel ID,
+    # then masters.xml.rels to map rel ID -> master file.
+    master_id_to_file = {}  # Master ID -> master file number
     try:
         masters_xml = zf.read("visio/masters/masters.xml")
         root = ET.fromstring(masters_xml)
+
+        # Parse rels to map rId -> filename
+        rid_to_file = {}
+        try:
+            rels_xml = zf.read("visio/masters/_rels/masters.xml.rels")
+            rels_root = ET.fromstring(rels_xml)
+            for rel in rels_root:
+                rid = rel.get("Id", "")
+                target = rel.get("Target", "")
+                # target is like "master2.xml"
+                fname = Path(target).stem.replace("master", "")
+                rid_to_file[rid] = fname
+        except (KeyError, ET.ParseError):
+            pass
+
         for master_el in root.findall(f"{_VTAG}Master"):
             mid = master_el.get("ID", "")
-            rel_el = master_el.find(f"{{{_NS['r']}}}Rel")
+            # Find the Rel element — it's in the Visio namespace, not the rels namespace
+            rel_el = master_el.find(f"{_VTAG}Rel")
             if rel_el is None:
-                rel_el = master_el.find(f"Rel")
-            # Also try to find via Rel element with rId
-            # The master file number usually matches the ID
-            master_map[mid] = mid
+                rel_el = master_el.find(f"{{{_NS['r']}}}Rel")
+            if rel_el is not None:
+                # The r:id attribute uses the relationships namespace
+                rid = rel_el.get(f"{{{_NS['r']}}}id", "")
+                if rid and rid in rid_to_file:
+                    master_id_to_file[mid] = rid_to_file[rid]
+                    continue
+            # Fallback: assume master ID matches file number
+            master_id_to_file[mid] = mid
     except (KeyError, ET.ParseError):
         pass
 
+    # Parse all master files keyed by file number
+    file_to_shapes = {}
     masters = {}
     for name in zf.namelist():
         if not (name.startswith("visio/masters/master") and name.endswith(".xml")):
@@ -583,7 +610,18 @@ def _parse_master_shapes(zf: zipfile.ZipFile) -> dict[str, dict]:
             shapes_data[sd["id"]] = sd
 
         if shapes_data:
-            masters[master_num] = shapes_data
+            file_to_shapes[master_num] = shapes_data
+
+    # Re-key by Master ID using the mapping
+    for mid, fnum in master_id_to_file.items():
+        if fnum in file_to_shapes:
+            masters[mid] = file_to_shapes[fnum]
+
+    # For any file not mapped (e.g. missing rels), add by file number as fallback
+    mapped_files = set(master_id_to_file.values())
+    for fnum, shapes_data in file_to_shapes.items():
+        if fnum not in mapped_files:
+            masters[fnum] = shapes_data
 
     return masters
 
@@ -700,13 +738,17 @@ def _parse_geometry_section(section: ET.Element) -> dict:
 
     for row in section.findall(f"{_VTAG}Row"):
         row_type = row.get("T", "")
-        row_data = {"type": row_type, "cells": {}}
+        row_ix = row.get("IX", "")
+        row_data = {"type": row_type, "cells": {}, "ix": row_ix}
         for cell in row.findall(f"{_VTAG}Cell"):
             n = cell.get("N", "")
             v = cell.get("V", "")
             f = cell.get("F", "")
             row_data["cells"][n] = {"V": v, "F": f}
         geo["rows"].append(row_data)
+
+    # Store section IX for merging
+    geo["ix"] = section.get("IX", "0")
 
     return geo
 
@@ -1025,9 +1067,12 @@ def _merge_shape_with_master(shape: dict, masters: dict,
     merged_cells.update({k: v for k, v in shape["cells"].items() if v.get("V")})
     shape["cells"] = merged_cells
 
-    # Merge geometry: use local if present, otherwise master
-    if not shape["geometry"] and master_sd.get("geometry"):
-        shape["geometry"] = master_sd["geometry"]
+    # Merge geometry: use local if present, otherwise master.
+    # If local geometry has fewer rows than master (partial override with F='Inh'),
+    # merge row-by-row using IX as key.
+    master_geos = master_sd.get("geometry", [])
+    if not shape["geometry"] and master_geos:
+        shape["geometry"] = master_geos
         # Store master's original dimensions for geometry coordinate scaling
         master_w_val = master_sd.get("cells", {}).get("Width", {}).get("V")
         master_h_val = master_sd.get("cells", {}).get("Height", {}).get("V")
@@ -1035,6 +1080,52 @@ def _merge_shape_with_master(shape: dict, masters: dict,
             shape["_master_w"] = _safe_float(master_w_val)
         if master_h_val:
             shape["_master_h"] = _safe_float(master_h_val)
+    elif shape["geometry"] and master_geos:
+        # Mark that this shape had its own geometry (important for 1D connectors)
+        shape["_has_own_geometry"] = True
+
+        # Check if this is a 1D connector — connectors use their own geometry
+        # directly (routed paths), don't merge row-by-row with master.
+        is_1d_shape = bool(
+            shape["cells"].get("BeginX", {}).get("V")
+            and shape["cells"].get("EndX", {}).get("V")
+        ) or shape["cells"].get("ObjType", {}).get("V") == "2"
+
+        if not is_1d_shape:
+            # Row-level merge for 2D shapes: page shape may only override some rows
+            for gi, local_geo in enumerate(shape["geometry"]):
+                if gi >= len(master_geos):
+                    break
+                master_geo = master_geos[gi]
+                local_rows = local_geo.get("rows", [])
+                master_rows = master_geo.get("rows", [])
+
+                # Build IX->row map for local overrides
+                local_by_ix = {}
+                for r in local_rows:
+                    ix = r.get("ix", "")
+                    if ix:
+                        local_by_ix[ix] = r
+
+                if local_by_ix and len(local_rows) < len(master_rows):
+                    # Partial override — merge master rows with local overrides
+                    merged_rows = []
+                    for mr in master_rows:
+                        mix = mr.get("ix", "")
+                        if mix and mix in local_by_ix:
+                            # Merge cells: use local cell values, fall back to master
+                            lr = local_by_ix[mix]
+                            merged_cells = dict(mr["cells"])
+                            for cn, cv in lr["cells"].items():
+                                if cv.get("V"):
+                                    merged_cells[cn] = cv
+                            merged_row = {"type": lr["type"] or mr["type"],
+                                          "cells": merged_cells,
+                                          "ix": mix}
+                            merged_rows.append(merged_row)
+                        else:
+                            merged_rows.append(mr)
+                    local_geo["rows"] = merged_rows
 
     # Merge text: use local if present, otherwise master
     if not shape["text"] and master_sd.get("text"):
@@ -1296,13 +1387,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 media, page_rels, used_markers, output_dir,
                 theme_colors, layers, gradients, has_shadow))
         lines.append('</g>')
-        # Render text for the group itself, or shape name as label
+        # Render text for the group itself (but not auto-generated name labels
+        # for groups — sub-shapes already provide visible content)
         if shape["text"]:
             _append_text_svg(lines, shape, page_h, w_px, h_px, theme_colors)
-        elif _depth == 0:
-            label = shape.get("name_u") or shape.get("name", "")
-            if label and label not in ("Sheet", "Group"):
-                _append_name_label(lines, shape, page_h, w_px, h_px, label)
         return lines
 
     # --- Compute transform ---
@@ -1311,34 +1399,11 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     # --- Geometry rendering ---
     has_geometry = bool(shape["geometry"])
 
-    if has_geometry:
-        master_w = shape.get("_master_w", 0.0)
-        master_h = shape.get("_master_h", 0.0)
-        for geo in shape["geometry"]:
-            path_d = _geometry_to_path(geo, w_inch, h_inch, master_w, master_h)
-            if not path_d:
-                continue
+    # For 1D connectors, use dedicated rendering even if they have master geometry
+    obj_type = _get_cell_val(shape, "ObjType")
+    is_connector = is_1d or obj_type == "2"
 
-            geo_fill = fill
-            geo_stroke = stroke
-            if geo.get("no_fill"):
-                geo_fill = "none"
-            if geo.get("no_line"):
-                geo_stroke = "none"
-
-            geo_style = (
-                f'fill="{geo_fill}" stroke="{geo_stroke}" '
-                f'stroke-width="{stroke_width:.2f}"'
-            )
-            if dash_array:
-                geo_style += f' stroke-dasharray="{dash_array}"'
-
-            lines.append(
-                f'<path d="{path_d}" {geo_style}{shadow_attr} '
-                f'transform="{transform}"/>'
-            )
-
-    elif is_1d:
+    if is_connector and is_1d:
         # 1D shape — check for geometry (routed connectors) first
         bx = _safe_float(begin_x) * _INCH_TO_PX
         by = (page_h - _safe_float(begin_y)) * _INCH_TO_PX
@@ -1361,7 +1426,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             used_markers.add(mid)
             marker_attrs += f' marker-end="url(#{mid})"'
 
-        if has_geometry:
+        has_own_geo = shape.get("_has_own_geometry", False)
+        if has_geometry and has_own_geo:
             # Routed connector — render geometry path instead of straight line
             master_w = shape.get("_master_w", 0.0)
             master_h = shape.get("_master_h", 0.0)
@@ -1387,6 +1453,34 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 + (f' stroke-dasharray="{dash_array}"' if dash_array else '')
                 + marker_attrs
                 + '/>'
+            )
+
+    elif has_geometry:
+        # 2D shape with geometry
+        master_w = shape.get("_master_w", 0.0)
+        master_h = shape.get("_master_h", 0.0)
+        for geo in shape["geometry"]:
+            path_d = _geometry_to_path(geo, w_inch, h_inch, master_w, master_h)
+            if not path_d:
+                continue
+
+            geo_fill = fill
+            geo_stroke = stroke
+            if geo.get("no_fill"):
+                geo_fill = "none"
+            if geo.get("no_line"):
+                geo_stroke = "none"
+
+            geo_style = (
+                f'fill="{geo_fill}" stroke="{geo_stroke}" '
+                f'stroke-width="{stroke_width:.2f}"'
+            )
+            if dash_array:
+                geo_style += f' stroke-dasharray="{dash_array}"'
+
+            lines.append(
+                f'<path d="{path_d}" {geo_style}{shadow_attr} '
+                f'transform="{transform}"/>'
             )
 
     else:
@@ -2082,10 +2176,11 @@ def _parse_background_pages(zf: zipfile.ZipFile) -> dict[int, int]:
 
 
 def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
-    """Parse .vsdx (ZIP+XML) and generate SVG directly."""
+    """Parse .vsdx/.vstx/.vssx (ZIP+XML) and generate SVG directly."""
     if not zipfile.is_zipfile(input_path):
         return []
 
+    os.makedirs(output_dir, exist_ok=True)
     basename = Path(input_path).stem
     svg_files = []
 
@@ -2164,7 +2259,7 @@ def get_page_info(input_path: str) -> list[dict]:
     ext = Path(input_path).suffix.lower()
     pages = []
 
-    if ext in (".vsdx", ".vssx", ".vssm"):
+    if ext in _XML_EXTENSIONS:
         if not zipfile.is_zipfile(input_path):
             return pages
 
@@ -2193,7 +2288,7 @@ def extract_all_text(input_path: str) -> str:
     """Extract all text from a Visio file."""
     ext = Path(input_path).suffix.lower()
 
-    if ext in (".vsdx", ".vssx", ".vssm"):
+    if ext in _XML_EXTENSIONS:
         pages = get_page_info(input_path)
         text_lines = []
         for page in pages:
@@ -2204,7 +2299,7 @@ def extract_all_text(input_path: str) -> str:
             text_lines.append("")
         return "\n".join(text_lines)
 
-    if ext in (".vsd", ".vss"):
+    if ext in (".vsd", ".vss", ".vst"):
         tool = find_vsd2xhtml()
         if tool:
             try:
@@ -2247,7 +2342,7 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
 
     # For .vsdx files, prefer built-in parser (handles images, arrows,
     # background pages). Fall back to libvisio only for .vsd/.vss.
-    if ext in (".vsdx", ".vssx", ".vssm"):
+    if ext in _XML_EXTENSIONS:
         svg_files = _vsdx_to_svg(input_path, output_dir)
         if svg_files:
             return svg_files
@@ -2256,7 +2351,7 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
     if svg_files:
         return svg_files
 
-    if ext in (".vsd", ".vss"):
+    if ext in (".vsd", ".vss", ".vst"):
         raise RuntimeError(
             _("Cannot open %s files without libvisio. Install it:\n"
               "  Ubuntu/Debian: sudo apt install libvisio-tools\n"
@@ -2276,13 +2371,13 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
     ext = Path(input_path).suffix.lower()
     basename = Path(input_path).stem
 
-    if ext in (".vsd", ".vss"):
+    if ext in (".vsd", ".vss", ".vst"):
         svg_files = _convert_with_libvisio(input_path, output_dir, page=page_index + 1)
         if svg_files:
             return svg_files[0]
         return None
 
-    if ext in (".vsdx", ".vssx", ".vssm") and zipfile.is_zipfile(input_path):
+    if ext in _XML_EXTENSIONS and zipfile.is_zipfile(input_path):
         with zipfile.ZipFile(input_path, "r") as zf:
             masters = _parse_master_shapes(zf)
             media = _extract_media(zf)
