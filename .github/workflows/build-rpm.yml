@@ -55,12 +55,8 @@ jobs:
           printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > $PKG/usr/bin/vsdview
           chmod +x $PKG/usr/bin/vsdview
 
-          python3 -c "
-          import textwrap
-          spec = textwrap.dedent('''\
+          cat > vsdview.spec << 'SPECEOF'
           Name:           vsdview
-          Version:        $VERSION
-          Release:        1%{{?dist}}
           Summary:        Read-only viewer for Microsoft Visio files
           License:        GPL-3.0-or-later
           URL:            https://github.com/yeager/vsdview
@@ -83,10 +79,9 @@ jobs:
           /usr/lib/python3/dist-packages/vsdview/
           /usr/bin/vsdview
           /usr/share/locale/
-          ''')
-          with open('vsdview.spec', 'w') as f:
-              f.write(spec)
-          "
+          SPECEOF
+          sed -i 's/^          //' vsdview.spec
+          sed -i "1a Version:        ${VERSION}\nRelease:        1%{?dist}" vsdview.spec
 
           rpmbuild -bb vsdview.spec \
             --define "_topdir $(pwd)/rpmbuild" \
