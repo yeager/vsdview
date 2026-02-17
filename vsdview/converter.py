@@ -84,6 +84,10 @@ def _convert_with_libvisio(input_path: str, output_dir: str, page: int | None = 
     # Extract SVG elements from XHTML
     svg_files = []
     try:
+        # Register SVG namespace as default to avoid ns0: prefixes in output
+        ET.register_namespace("", "http://www.w3.org/2000/svg")
+        ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
+
         root = ET.fromstring(xhtml_content)
         ns = {"svg": "http://www.w3.org/2000/svg", "xhtml": "http://www.w3.org/1999/xhtml"}
         svgs = root.findall(".//svg:svg", ns)
