@@ -8,11 +8,34 @@ A minimal read-only viewer for Microsoft Visio files (.vsdx/.vsd), built with GT
 - GTK4, libadwaita, librsvg (GObject Introspection)
 - LibreOffice (for headless conversion of Visio → SVG)
 
+## Installation
+
+### From .deb (Ubuntu/Debian)
+
+```bash
+sudo dpkg -i vsdview_0.1.0-1_all.deb
+sudo apt-get install -f
+```
+
+### From .rpm (Fedora)
+
+```bash
+sudo dnf install vsdview-0.1.0-1.noarch.rpm
+```
+
+### From source
+
+```bash
+pip install .
+```
+
 ## Usage
 
 ```bash
-python -m vsdview [file.vsdx]
+vsdview [file.vsdx]
 ```
+
+You can also drag and drop .vsdx/.vsd files onto the window.
 
 ## Keyboard Shortcuts
 
@@ -20,6 +43,27 @@ python -m vsdview [file.vsdx]
 |-----|--------|
 | Ctrl+O | Open file |
 | Ctrl+Q | Quit |
+| Ctrl+Plus | Zoom in |
+| Ctrl+Minus | Zoom out |
+| Ctrl+0 | Fit to window |
+| F5 | Refresh |
+| Ctrl+E | Export as PNG |
+| Ctrl+/ | Keyboard shortcuts |
+
+## Features
+
+- SVG rendering via librsvg + Cairo
+- Zoom (keyboard, Ctrl+scroll wheel)
+- Light/dark theme toggle
+- Drag and drop support
+- Recent files list
+- Export to PNG
+- Desktop notifications for errors
+- i18n ready (gettext)
+
+## Translation
+
+Translations are managed via [Transifex](https://www.transifex.com/danielnylander/vsdview/).
 
 ## License
 

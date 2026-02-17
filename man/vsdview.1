@@ -1,0 +1,59 @@
+.TH VSDVIEW 1 "February 2026" "vsdview 0.1.0" "User Commands"
+.SH NAME
+vsdview \- a read-only viewer for Microsoft Visio files
+.SH SYNOPSIS
+.B vsdview
+.RI [ FILE ]
+.SH DESCRIPTION
+.B vsdview
+is a minimal read-only viewer for Microsoft Visio files (.vsdx and .vsd),
+built with GTK4 and libadwaita. It uses LibreOffice in headless mode to
+convert Visio diagrams to SVG for rendering.
+.SH OPTIONS
+.TP
+.I FILE
+An optional Visio file (.vsdx or .vsd) to open on startup.
+.SH KEYBOARD SHORTCUTS
+.TP
+.B Ctrl+O
+Open a file
+.TP
+.B Ctrl+Q
+Quit
+.TP
+.B Ctrl+Plus
+Zoom in
+.TP
+.B Ctrl+Minus
+Zoom out
+.TP
+.B Ctrl+0
+Fit to window
+.TP
+.B F5
+Refresh (re-convert current file)
+.TP
+.B Ctrl+E
+Export as PNG
+.TP
+.B Ctrl+/
+Show keyboard shortcuts
+.SH DRAG AND DROP
+You can drag and drop .vsdx or .vsd files onto the window to open them.
+.SH REQUIREMENTS
+.TP
+.B LibreOffice
+Required for converting Visio files to SVG. Install via your package manager.
+.TP
+.B librsvg
+Used for SVG rendering.
+.SH FILES
+.TP
+.I ~/.local/share/vsdview/recent.json
+Recently opened files list.
+.SH BUGS
+Report bugs at https://github.com/yeager/vsdview/issues
+.SH AUTHOR
+Daniel Nylander
+.SH LICENSE
+GPL-3.0-or-later

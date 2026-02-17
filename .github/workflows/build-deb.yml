@@ -1,0 +1,88 @@
+name: Build .deb
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get install -y gettext dpkg-dev
+
+      - name: Pull translations
+        env:
+          TX_TOKEN: ${{ secrets.TX_TOKEN }}
+        run: |
+          curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash
+          sudo mv tx /usr/local/bin/
+          tx pull -a --force --minimum-perc 10 || true
+
+      - name: Compile translations
+        run: |
+          for po in po/*.po; do
+            [ -f "$po" ] || continue
+            lang=$(basename "$po" .po)
+            mkdir -p locale/$lang/LC_MESSAGES
+            msgfmt -o locale/$lang/LC_MESSAGES/vsdview.mo "$po"
+          done
+
+      - name: Build .deb
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          PKG=$(mktemp -d)
+          mkdir -p $PKG/usr/lib/python3/dist-packages/vsdview
+          mkdir -p $PKG/usr/bin
+          mkdir -p $PKG/usr/share/man/man1
+          mkdir -p $PKG/DEBIAN
+
+          cp vsdview/*.py $PKG/usr/lib/python3/dist-packages/vsdview/
+
+          for mo in locale/*/LC_MESSAGES/vsdview.mo; do
+            [ -f "$mo" ] || continue
+            lang=$(echo "$mo" | cut -d/ -f2)
+            mkdir -p $PKG/usr/share/locale/$lang/LC_MESSAGES
+            cp "$mo" $PKG/usr/share/locale/$lang/LC_MESSAGES/
+          done
+
+          cp man/vsdview.1 $PKG/usr/share/man/man1/
+          gzip -9 $PKG/usr/share/man/man1/vsdview.1
+
+          printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > $PKG/usr/bin/vsdview
+          chmod +x $PKG/usr/bin/vsdview
+
+          cat > $PKG/DEBIAN/control << EOF
+          Package: vsdview
+          Version: ${VERSION}-1
+          Section: graphics
+          Priority: optional
+          Architecture: all
+          Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-rsvg-2.0, libreoffice-draw
+          Recommends: librsvg2-bin
+          Maintainer: Daniel Nylander <daniel@danielnylander.se>
+          Homepage: https://github.com/yeager/vsdview
+          Description: Read-only viewer for Microsoft Visio files
+           VSDView is a minimal viewer for .vsdx and .vsd files, built with
+           GTK4 and libadwaita. Uses LibreOffice for headless conversion.
+          EOF
+          sed -i 's/^          //' $PKG/DEBIAN/control
+
+          dpkg-deb --root-owner-group --build $PKG vsdview_${VERSION}-1_all.deb
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          gh release create $GITHUB_REF_NAME vsdview_${VERSION}-1_all.deb \
+            --title "v${VERSION}" \
+            --notes "Release v${VERSION}" \
+            --repo yeager/vsdview || \
+          gh release upload $GITHUB_REF_NAME vsdview_${VERSION}-1_all.deb \
+            --clobber --repo yeager/vsdview

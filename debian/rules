@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	mkdir -p debian/vsdview/usr/lib/python3/dist-packages/vsdview
+	mkdir -p debian/vsdview/usr/bin
+	mkdir -p debian/vsdview/usr/share/man/man1
+	cp vsdview/*.py debian/vsdview/usr/lib/python3/dist-packages/vsdview/
+	printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > debian/vsdview/usr/bin/vsdview
+	chmod +x debian/vsdview/usr/bin/vsdview
+	cp man/vsdview.1 debian/vsdview/usr/share/man/man1/

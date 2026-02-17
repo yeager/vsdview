@@ -1,0 +1,95 @@
+name: Build .rpm
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: dnf install -y rpm-build python3 gettext
+
+      - name: Pull translations
+        run: |
+          curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash
+          mv tx /usr/local/bin/
+          tx pull -a --force --minimum-perc 10 || true
+        env:
+          TX_TOKEN: ${{ secrets.TX_TOKEN }}
+
+      - name: Compile translations
+        run: |
+          for po in po/*.po; do
+            [ -f "$po" ] || continue
+            lang=$(basename "$po" .po)
+            mkdir -p locale/$lang/LC_MESSAGES
+            msgfmt -o locale/$lang/LC_MESSAGES/vsdview.mo "$po"
+          done
+
+      - name: Build .rpm
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          python3 -c "
+          import textwrap, os
+          version = os.environ['VERSION']
+          spec = textwrap.dedent(f'''
+              Name:           vsdview
+              Version:        {version}
+              Release:        1%{{?dist}}
+              Summary:        Read-only viewer for Microsoft Visio files
+              License:        GPL-3.0-or-later
+              URL:            https://github.com/yeager/vsdview
+              BuildArch:      noarch
+              Requires:       python3 >= 3.10
+              Requires:       python3-gobject
+              Requires:       gtk4
+              Requires:       libadwaita
+              Requires:       librsvg2
+              Requires:       libreoffice-draw
+
+              %description
+              VSDView is a minimal read-only viewer for Microsoft Visio files
+              (.vsdx and .vsd), built with GTK4 and libadwaita.
+
+              %install
+              mkdir -p %{{buildroot}}/usr/lib/python3/dist-packages/vsdview
+              mkdir -p %{{buildroot}}/usr/bin
+              mkdir -p %{{buildroot}}/usr/share/man/man1
+              cp vsdview/*.py %{{buildroot}}/usr/lib/python3/dist-packages/vsdview/
+              printf '#!/usr/bin/env python3\\nfrom vsdview.__main__ import main\\nmain()\\n' > %{{buildroot}}/usr/bin/vsdview
+              chmod +x %{{buildroot}}/usr/bin/vsdview
+              cp man/vsdview.1 %{{buildroot}}/usr/share/man/man1/
+              gzip -9 %{{buildroot}}/usr/share/man/man1/vsdview.1
+
+              %files
+              /usr/lib/python3/dist-packages/vsdview/
+              /usr/bin/vsdview
+              /usr/share/man/man1/vsdview.1.gz
+          ''').lstrip()
+          with open('vsdview.spec', 'w') as f:
+              f.write(spec)
+          "
+          rpmbuild -bb vsdview.spec \
+            --define "_topdir $(pwd)/rpmbuild" \
+            --buildroot "$(pwd)/buildroot"
+          cp rpmbuild/RPMS/noarch/*.rpm .
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dnf install -y gh || true
+          VERSION=${GITHUB_REF_NAME#v}
+          RPM=$(ls vsdview-*.rpm | head -1)
+          gh release upload $GITHUB_REF_NAME "$RPM" \
+            --clobber --repo yeager/vsdview

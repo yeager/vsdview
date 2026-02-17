@@ -1,10 +1,13 @@
 """Convert Visio files (.vsdx, .vsd) to SVG using LibreOffice headless."""
 
+import gettext
 import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+_ = gettext.gettext
 
 
 def find_libreoffice() -> str | None:
@@ -13,7 +16,6 @@ def find_libreoffice() -> str | None:
         path = shutil.which(name)
         if path:
             return path
-    # Common paths
     for p in (
         "/usr/bin/libreoffice",
         "/usr/bin/soffice",
@@ -33,10 +35,10 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
     lo = find_libreoffice()
     if not lo:
         raise RuntimeError(
-            "LibreOffice not found. Install it:\n"
-            "  Ubuntu/Debian: sudo apt install libreoffice\n"
-            "  Fedora: sudo dnf install libreoffice\n"
-            "  macOS: brew install --cask libreoffice"
+            _("LibreOffice not found. Install it:\n"
+              "  Ubuntu/Debian: sudo apt install libreoffice\n"
+              "  Fedora: sudo dnf install libreoffice\n"
+              "  macOS: brew install --cask libreoffice")
         )
 
     if output_dir is None:
@@ -45,15 +47,8 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
     input_path = os.path.abspath(input_path)
     basename = Path(input_path).stem
 
-    # Convert to SVG via LibreOffice headless
     result = subprocess.run(
-        [
-            lo,
-            "--headless",
-            "--convert-to", "svg",
-            "--outdir", output_dir,
-            input_path,
-        ],
+        [lo, "--headless", "--convert-to", "svg", "--outdir", output_dir, input_path],
         capture_output=True,
         text=True,
         timeout=60,
@@ -61,25 +56,15 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
 
     if result.returncode != 0:
         raise RuntimeError(
-            f"LibreOffice conversion failed:\n{result.stderr}"
+            _("LibreOffice conversion failed:\n%s") % result.stderr
         )
 
-    # Collect output SVG files
-    svg_files = sorted(
-        str(p)
-        for p in Path(output_dir).glob(f"{basename}*.svg")
-    )
+    svg_files = sorted(str(p) for p in Path(output_dir).glob(f"{basename}*.svg"))
 
     if not svg_files:
         # Try PDF as intermediate
         result2 = subprocess.run(
-            [
-                lo,
-                "--headless",
-                "--convert-to", "pdf",
-                "--outdir", output_dir,
-                input_path,
-            ],
+            [lo, "--headless", "--convert-to", "pdf", "--outdir", output_dir, input_path],
             capture_output=True,
             text=True,
             timeout=60,
@@ -87,24 +72,21 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
         if result2.returncode == 0:
             pdf_path = os.path.join(output_dir, f"{basename}.pdf")
             if os.path.exists(pdf_path):
-                # Convert PDF pages to SVG using pdftocairo if available
                 pdftocairo = shutil.which("pdftocairo")
                 if pdftocairo:
                     subprocess.run(
-                        [pdftocairo, "-svg", pdf_path,
-                         os.path.join(output_dir, basename)],
+                        [pdftocairo, "-svg", pdf_path, os.path.join(output_dir, basename)],
                         capture_output=True,
                         timeout=60,
                     )
                     svg_files = sorted(
-                        str(p)
-                        for p in Path(output_dir).glob(f"{basename}*.svg")
+                        str(p) for p in Path(output_dir).glob(f"{basename}*.svg")
                     )
 
     if not svg_files:
         raise RuntimeError(
-            "Conversion produced no SVG output. "
-            "The file may be corrupt or unsupported."
+            _("Conversion produced no SVG output. "
+              "The file may be corrupt or unsupported.")
         )
 
     return svg_files
@@ -121,7 +103,6 @@ def export_to_png(svg_path: str, output_path: str, width: int = 1920) -> str:
         )
         return output_path
 
-    # Fallback: try cairosvg
     try:
         import cairosvg
         cairosvg.svg2png(url=svg_path, write_to=output_path, output_width=width)
@@ -130,7 +111,7 @@ def export_to_png(svg_path: str, output_path: str, width: int = 1920) -> str:
         pass
 
     raise RuntimeError(
-        "Neither rsvg-convert nor cairosvg found. Install one:\n"
-        "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
-        "  pip install cairosvg"
+        _("Neither rsvg-convert nor cairosvg found. Install one:\n"
+          "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
+          "  pip install cairosvg")
     )
