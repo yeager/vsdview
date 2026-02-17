@@ -173,6 +173,7 @@ class VSDViewApplication(Adw.Application):
             debug_info_filename="vsdview-debug-info.txt",
             website="https://github.com/yeager/vsdview",
             issue_url="https://github.com/yeager/vsdview/issues",
+            comments=_("Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView is not affiliated with or endorsed by Microsoft."),
         )
         about.add_legal_section("GTK", "The GTK Team", Gtk.License.LGPL_2_1)
         about.add_legal_section("libadwaita", "The GNOME Project", Gtk.License.LGPL_2_1)

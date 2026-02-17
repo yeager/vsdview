@@ -68,3 +68,7 @@ Translations are managed via [Transifex](https://www.transifex.com/danielnylande
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## Trademark Notice
+
+Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView is not affiliated with or endorsed by Microsoft.
