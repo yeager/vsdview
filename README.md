@@ -1,8 +1,10 @@
 # VSDView
 
-A minimal read-only viewer for Microsoft Visio files (.vsdx/.vsd), built with GTK4 and libadwaita.
+A read-only viewer for Microsoft Visio files (.vsdx/.vsd/.vss/.vst), built with GTK4 and libadwaita.
 
-![VSDView Screenshot](screenshots/vsdview-screenshot.png)
+![VSDView Main View](screenshots/vsdview-main.png)
+
+![VSDView Search](screenshots/vsdview-search.png)
 
 ## Requirements
 
@@ -34,7 +36,7 @@ sudo apt install vsdview
 ### Fedora/RPM
 
 ```bash
-sudo dnf install vsdview-0.1.7-1.noarch.rpm
+sudo dnf install vsdview-0.2.1-1.noarch.rpm
 ```
 
 ### From source
@@ -61,14 +63,23 @@ You can also drag and drop .vsdx/.vsd files onto the window.
 | Ctrl+Minus | Zoom out |
 | Ctrl+0 | Fit to window |
 | F5 | Refresh |
+| Ctrl+F | Search text |
+| Ctrl+C | Copy page text |
 | Ctrl+E | Export as PNG |
+| Ctrl+Shift+E | Export text |
+| Ctrl+Shift+P | Export PDF |
 | Ctrl+/ | Keyboard shortcuts |
 
 ## Features
 
-- Built-in .vsdx parser (no heavy dependencies)
-- Optional libvisio support for legacy .vsd files
+- Built-in .vsdx/.vssx parser (no heavy dependencies)
+- Optional libvisio support for legacy .vsd/.vss files
 - SVG rendering via librsvg + Cairo
+- **Text search** (Ctrl+F) with match count
+- **Copy text** (Ctrl+C) from shapes to clipboard
+- **Multi-page navigation** with page tabs
+- **Stencil support** (.vss/.vssx/.vssm)
+- **Export to PDF** (Ctrl+Shift+P) and text (Ctrl+Shift+E)
 - Zoom (keyboard, Ctrl+scroll wheel)
 - Light/dark theme toggle
 - Drag and drop support
