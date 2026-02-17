@@ -37,15 +37,24 @@ jobs:
       - name: Build .rpm
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          SRCDIR=$(pwd)
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-          cat > vsdview.spec << SPECEOF
+          # Create tarball
+          PKG=vsdview-$VERSION
+          mkdir -p $PKG
+          cp -r vsdview $PKG/
+          cp -r locale $PKG/ 2>/dev/null || true
+          tar czf ~/rpmbuild/SOURCES/vsdview-$VERSION.tar.gz $PKG
+
+          # Write spec
+          cat > ~/rpmbuild/SPECS/vsdview.spec << SPECEOF
           Name:           vsdview
-          Version:        ${VERSION}
+          Version:        $VERSION
           Release:        1
           Summary:        Read-only viewer for Microsoft Visio files
           License:        GPL-3.0-or-later
           URL:            https://github.com/yeager/vsdview
+          Source0:        vsdview-$VERSION.tar.gz
           BuildArch:      noarch
           Requires:       python3 >= 3.10
           Requires:       python3-gobject
@@ -56,34 +65,37 @@ jobs:
 
           %description
           VSDView is a minimal read-only viewer for Microsoft Visio files
-          (.vsdx and .vsd), built with GTK4 and libadwaita.
+          (.vsdx and .vsd), built with GTK4 and libadwaita. Uses a built-in
+          .vsdx parser with optional libvisio support for legacy .vsd files.
+
+          %prep
+          %setup -q
 
           %install
-          mkdir -p %{buildroot}/usr/lib/python3/dist-packages/vsdview
-          mkdir -p %{buildroot}/usr/bin
-          cp ${SRCDIR}/vsdview/*.py %{buildroot}/usr/lib/python3/dist-packages/vsdview/
-          for mo in ${SRCDIR}/locale/*/LC_MESSAGES/vsdview.mo; do
-            [ -f "\$mo" ] || continue
-            lang=\$(echo "\$mo" | rev | cut -d/ -f3 | rev)
-            mkdir -p %{buildroot}/usr/share/locale/\$lang/LC_MESSAGES
-            cp "\$mo" %{buildroot}/usr/share/locale/\$lang/LC_MESSAGES/
-          done
-          printf '#!/usr/bin/env python3\\nfrom vsdview.__main__ import main\\nmain()\\n' > %{buildroot}/usr/bin/vsdview
-          chmod +x %{buildroot}/usr/bin/vsdview
+          mkdir -p \$RPM_BUILD_ROOT/usr/lib/python3/dist-packages
+          mkdir -p \$RPM_BUILD_ROOT/usr/bin
+          cp -r vsdview \$RPM_BUILD_ROOT/usr/lib/python3/dist-packages/
+          find \$RPM_BUILD_ROOT -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+          if [ -d locale ]; then
+            for mo in locale/*/LC_MESSAGES/vsdview.mo; do
+              [ -f "\$mo" ] || continue
+              lang=\$(echo "\$mo" | cut -d/ -f2)
+              mkdir -p \$RPM_BUILD_ROOT/usr/share/locale/\$lang/LC_MESSAGES
+              cp "\$mo" \$RPM_BUILD_ROOT/usr/share/locale/\$lang/LC_MESSAGES/
+            done
+          fi
+          printf '#!/usr/bin/env python3\\nfrom vsdview.__main__ import main\\nmain()\\n' > \$RPM_BUILD_ROOT/usr/bin/vsdview
+          chmod +x \$RPM_BUILD_ROOT/usr/bin/vsdview
 
           %files
           /usr/lib/python3/dist-packages/vsdview/
           /usr/bin/vsdview
           /usr/share/locale/
           SPECEOF
-          sed -i 's/^          //' vsdview.spec
+          sed -i 's/^          //' ~/rpmbuild/SPECS/vsdview.spec
 
-          rpmbuild -bb vsdview.spec \
-            --define "_topdir $(pwd)/rpmbuild" \
-            --buildroot "$(pwd)/buildroot"
-          cp rpmbuild/RPMS/noarch/*.rpm .
-        env:
-          VERSION: ${{ github.ref_name }}
+          rpmbuild -bb ~/rpmbuild/SPECS/vsdview.spec
+          cp ~/rpmbuild/RPMS/noarch/*.rpm .
 
       - name: Upload to release
         env:
