@@ -759,7 +759,8 @@ def _compute_transform(shape: dict, page_h: float) -> str:
 
 
 def _render_shape_svg(shape: dict, page_h: float, masters: dict,
-                       parent_master_id: str = "") -> list[str]:
+                       parent_master_id: str = "",
+                       _depth: int = 0) -> list[str]:
     """Render a single shape as SVG elements. Returns list of SVG strings."""
     shape = _merge_shape_with_master(shape, masters, parent_master_id)
 
@@ -793,17 +794,30 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     line_color = _resolve_color(_get_cell_val(shape, "LineColor")) or "#333333"
     fill_foregnd = _resolve_color(_get_cell_val(shape, "FillForegnd"))
     fill_bkgnd = _resolve_color(_get_cell_val(shape, "FillBkgnd"))
+
+    # GUARD(color_index) in Visio stencils are theme accent placeholders.
+    # Replace magenta (#FF00FF, color 6) with a sensible default accent.
+    _ff_formula = shape.get("cells", {}).get("FillForegnd", {}).get("F", "")
+    if "GUARD" in _ff_formula and fill_foregnd == "#FF00FF":
+        fill_foregnd = "#5B9BD5"  # Default blue accent
+    _fb_formula = shape.get("cells", {}).get("FillBkgnd", {}).get("F", "")
+    if "GUARD" in _fb_formula and fill_bkgnd == "#FF00FF":
+        fill_bkgnd = "#5B9BD5"
     fill_pattern = _get_cell_val(shape, "FillPattern", "1")
     line_pattern = int(_safe_float(_get_cell_val(shape, "LinePattern", "1")))
     rounding = _get_cell_float(shape, "Rounding") * _INCH_TO_PX
 
     # Determine fill
-    if fill_pattern == "0":
+    fill_pat_int = int(_safe_float(fill_pattern, 1))
+    if fill_pat_int == 0:
         fill = "none"
-    elif fill_foregnd:
-        fill = fill_foregnd
-    elif fill_bkgnd:
-        fill = fill_bkgnd
+    elif fill_pat_int == 1:
+        # Solid fill
+        fill = fill_foregnd or fill_bkgnd or "none"
+    elif fill_pat_int >= 2:
+        # Pattern/gradient fill — approximate with background color or
+        # a lighter version of foreground; fall back to light gray
+        fill = fill_bkgnd or fill_foregnd or "#E8E8E8"
     else:
         fill = "none"
 
@@ -832,18 +846,33 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     is_1d = bool(begin_x and end_x)
 
     # --- Group shapes ---
-    if shape_type == "Group":
+    if shape_type == "Group" or shape.get("sub_shapes"):
         transform = _compute_transform(shape, page_h)
         group_master_id = shape.get("master", "") or parent_master_id
         # Group's local coordinate system uses its own Width x Height
         group_h = h_inch
-        lines.append(f'<g transform="{transform}">')
+
+        # Clip group contents to group bounds
+        clip_id = f"clip_{shape['id']}"
+        lines.append(
+            f'<defs><clipPath id="{clip_id}">'
+            f'<rect x="0" y="0" width="{w_px:.2f}" height="{h_px:.2f}"/>'
+            f'</clipPath></defs>'
+        )
+        lines.append(
+            f'<g transform="{transform}" clip-path="url(#{clip_id})">'
+        )
         for sub in shape.get("sub_shapes", []):
-            lines.extend(_render_shape_svg(sub, group_h, masters, group_master_id))
+            lines.extend(_render_shape_svg(
+                sub, group_h, masters, group_master_id, _depth + 1))
         lines.append('</g>')
-        # Render text for the group itself
+        # Render text for the group itself, or shape name as label
         if shape["text"]:
             _append_text_svg(lines, shape, page_h, w_px, h_px)
+        elif _depth == 0:
+            label = shape.get("name_u") or shape.get("name", "")
+            if label and label not in ("Sheet", "Group"):
+                _append_name_label(lines, shape, page_h, w_px, h_px, label)
         return lines
 
     # --- Compute transform ---
@@ -893,8 +922,9 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         )
 
     else:
-        # No geometry, no 1D — fall back to rectangle
-        if w_px > 0 and h_px > 0:
+        # No geometry, no 1D — fall back to rectangle only if shape has
+        # explicit fill/stroke (not for empty group sub-shapes)
+        if w_px > 0 and h_px > 0 and (fill != "none" or shape.get("text")):
             rx_attr = f' rx="{rounding:.2f}"' if rounding > 0 else ""
             lines.append(
                 f'<rect x="0" y="0" width="{w_px:.2f}" height="{h_px:.2f}" '
@@ -904,6 +934,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     # --- Text rendering ---
     if shape["text"]:
         _append_text_svg(lines, shape, page_h, w_px, h_px)
+
+    # No fallback rectangle for shapes inside groups (sub-shapes)
+    # is handled by skipping the else branch when geometry/1D absent
+    # and the shape has no meaningful content
 
     return lines
 
@@ -981,6 +1015,31 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 f'fill="{text_color}"{fw}{fs}{td}>'
                 f'{escaped}</text>'
             )
+
+
+def _append_name_label(lines: list, shape: dict, page_h: float,
+                       w_px: float, h_px: float, label: str):
+    """Append a shape name as a text label below the shape."""
+    pin_x = _get_cell_float(shape, "PinX") * _INCH_TO_PX
+    pin_y = (page_h - _get_cell_float(shape, "PinY")) * _INCH_TO_PX
+    h_inch = _get_cell_float(shape, "Height")
+
+    # Position label below the shape
+    tx = pin_x
+    ty = pin_y + h_inch * _INCH_TO_PX / 2 + 14
+
+    # Scale font size relative to shape width (min 10px, max 48px)
+    w_inch = _get_cell_float(shape, "Width")
+    font_sz = max(10, min(48, w_inch * _INCH_TO_PX * 0.06))
+
+    escaped = _escape_xml(label)
+    lines.append(
+        f'<text x="{tx:.2f}" y="{ty:.2f}" '
+        f'text-anchor="middle" dominant-baseline="central" '
+        f'font-family="sans-serif" font-size="{font_sz:.1f}" '
+        f'fill="#333333">'
+        f'{escaped}</text>'
+    )
 
 
 # ---------------------------------------------------------------------------
