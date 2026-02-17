@@ -175,6 +175,12 @@ class VSDViewApplication(Adw.Application):
             website="https://github.com/yeager/vsdview",
             issue_url="https://github.com/yeager/vsdview/issues",
         )
+        about.add_legal_section("GTK", "The GTK Team", Gtk.License.LGPL_2_1)
+        about.add_legal_section("libadwaita", "The GNOME Project", Gtk.License.LGPL_2_1)
+        about.add_legal_section("PyGObject", "The PyGObject Team", Gtk.License.LGPL_2_1)
+        about.add_legal_section("librsvg", "The librsvg Contributors", Gtk.License.LGPL_2_1)
+        about.add_legal_section("libvisio", "The Document Liberation Project", Gtk.License.MPL_2_0)
+        about.add_legal_section("CairoSVG", "CourtBouillon", Gtk.License.LGPL_3_0)
         about.present(self.props.active_window)
 
     def _build_debug_info(self):
