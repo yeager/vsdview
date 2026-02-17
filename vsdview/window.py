@@ -26,6 +26,45 @@ from vsdview.converter import (
 _ = gettext.gettext
 
 
+_CANVAS_MODES = ("system", "light", "dark")
+_CANVAS_ICONS = {
+    "system": "preferences-desktop-display-symbolic",
+    "light": "weather-clear-symbolic",
+    "dark": "weather-clear-night-symbolic",
+}
+_CANVAS_TOOLTIPS = {
+    "system": _("Canvas: System theme"),
+    "light": _("Canvas: Light background"),
+    "dark": _("Canvas: Dark background"),
+}
+
+_SETTINGS_DIR = os.path.join(GLib.get_user_config_dir(), "vsdview")
+_SETTINGS_PATH = os.path.join(_SETTINGS_DIR, "settings.ini")
+
+
+def _load_canvas_mode() -> str:
+    kf = GLib.KeyFile()
+    try:
+        kf.load_from_file(_SETTINGS_PATH, GLib.KeyFileFlags.NONE)
+        mode = kf.get_string("General", "canvas_mode")
+        if mode in _CANVAS_MODES:
+            return mode
+    except Exception:
+        pass
+    return "system"
+
+
+def _save_canvas_mode(mode: str):
+    os.makedirs(_SETTINGS_DIR, exist_ok=True)
+    kf = GLib.KeyFile()
+    try:
+        kf.load_from_file(_SETTINGS_PATH, GLib.KeyFileFlags.NONE)
+    except Exception:
+        pass
+    kf.set_string("General", "canvas_mode", mode)
+    kf.save_to_file(_SETTINGS_PATH)
+
+
 class VSDViewWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -40,6 +79,7 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._current_page = 0
         self._page_info = []  # page metadata with shapes
         self._search_query = ""
+        self._canvas_mode = _load_canvas_mode()
 
         # Main layout
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -60,6 +100,12 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._search_button.connect("toggled", self._on_search_toggled)
         header.pack_start(self._search_button)
 
+        # Canvas background mode button
+        self._canvas_btn = Gtk.Button(icon_name=_CANVAS_ICONS[self._canvas_mode])
+        self._canvas_btn.set_tooltip_text(_CANVAS_TOOLTIPS[self._canvas_mode])
+        self._canvas_btn.connect("clicked", self._on_canvas_mode_cycle)
+        header.pack_start(self._canvas_btn)
+
         # Hamburger menu
         menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu = Gio.Menu()
@@ -74,7 +120,22 @@ class VSDViewWindow(Adw.ApplicationWindow):
         menu.append_section(_("Export"), export_section)
 
         menu.append(_("Copy Text"), "app.copy-text")
-        menu.append(_("Toggle Dark Theme"), "app.toggle-theme")
+
+        canvas_submenu = Gio.Menu()
+        canvas_submenu.append(_("System"), "win.canvas-mode::system")
+        canvas_submenu.append(_("Light"), "win.canvas-mode::light")
+        canvas_submenu.append(_("Dark"), "win.canvas-mode::dark")
+        menu.append_submenu(_("Canvas Background"), canvas_submenu)
+
+        # Register the stateful action for canvas mode radio
+        canvas_action = Gio.SimpleAction.new_stateful(
+            "canvas-mode",
+            GLib.VariantType.new("s"),
+            GLib.Variant.new_string(self._canvas_mode),
+        )
+        canvas_action.connect("activate", self._on_canvas_mode_action)
+        self.add_action(canvas_action)
+
         menu.append(_("Keyboard Shortcuts"), "app.show-shortcuts")
         menu.append(_("About"), "app.about")
         menu.append(_("Quit"), "app.quit")
@@ -458,9 +519,44 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._drawing_area.queue_draw()
 
     def zoom_fit(self):
-        self._zoom_level = 1.0
+        if not self._svg_handle:
+            return
+        has_size, svg_w, svg_h = self._svg_handle.get_intrinsic_size_in_pixels()
+        if not has_size or svg_w == 0 or svg_h == 0:
+            self._zoom_level = 1.0
+        else:
+            alloc = self._drawing_area.get_allocation()
+            if alloc.width > 0 and alloc.height > 0:
+                zoom_w = alloc.width / svg_w
+                zoom_h = alloc.height / svg_h
+                self._zoom_level = min(zoom_w, zoom_h, 1.0)
+            else:
+                self._zoom_level = 1.0
         self._update_status()
         self._drawing_area.queue_draw()
+
+    def _set_canvas_mode(self, mode):
+        """Set canvas background mode and update UI."""
+        self._canvas_mode = mode
+        self._canvas_btn.set_icon_name(_CANVAS_ICONS[mode])
+        self._canvas_btn.set_tooltip_text(_CANVAS_TOOLTIPS[mode])
+        # Update the radio action state
+        action = self.lookup_action("canvas-mode")
+        if action:
+            action.set_state(GLib.Variant.new_string(mode))
+        _save_canvas_mode(mode)
+        self._drawing_area.queue_draw()
+
+    def _on_canvas_mode_cycle(self, button):
+        """Cycle: system → light → dark → system."""
+        idx = _CANVAS_MODES.index(self._canvas_mode)
+        self._set_canvas_mode(_CANVAS_MODES[(idx + 1) % len(_CANVAS_MODES)])
+
+    def _on_canvas_mode_action(self, action, parameter):
+        """Handle menu radio selection."""
+        mode = parameter.get_string()
+        if mode in _CANVAS_MODES:
+            self._set_canvas_mode(mode)
 
     def _on_scroll_zoom(self, controller, dx, dy):
         state = controller.get_current_event_state()
@@ -499,6 +595,14 @@ class VSDViewWindow(Adw.ApplicationWindow):
     def _on_draw(self, area, cr, width, height):
         if not self._svg_handle:
             return
+
+        # Paint canvas background based on mode
+        if self._canvas_mode == "light":
+            cr.set_source_rgb(1, 1, 1)
+            cr.paint()
+        elif self._canvas_mode == "dark":
+            cr.set_source_rgb(0.15, 0.15, 0.15)
+            cr.paint()
 
         viewport = Rsvg.Rectangle()
         viewport.x = 0
