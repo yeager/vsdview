@@ -26,6 +26,8 @@ msgid ""
 "Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
 "is not affiliated with or endorsed by Microsoft."
 msgstr ""
+"Microsoft Visio är ett registrerat varumärke som tillhör Microsoft "
+"Corporation. VSDView är inte anslutet till eller godkänt av Microsoft."
 
 #: vsdview/app.py:232
 msgid "not found"
@@ -34,7 +36,7 @@ msgstr "hittades inte"
 #: vsdview/converter.py:338
 #, python-format
 msgid "Unsupported file format: %s"
-msgstr ""
+msgstr "Filformatet stöds inte: %s"
 
 #: vsdview/converter.py:353
 #, python-format
@@ -44,12 +46,18 @@ msgid ""
 "  Fedora: sudo dnf install libvisio-tools\n"
 "  macOS: brew install libvisio"
 msgstr ""
+"Det går inte att öppna %s-filer utan libvisio. Installera det:\n"
+"  Ubuntu/Debian: sudo apt install libvisio-tools\n"
+"  Fedora: sudo dnf install libvisio-tools\n"
+"  macOS: brew install libvisio"
 
 #: vsdview/converter.py:360
 msgid ""
 "Could not parse the Visio file. The file may be corrupt or unsupported.\n"
 "For best results, install libvisio-tools."
 msgstr ""
+"Det gick inte att tolka Visio-filen. Filen kan vara skadad eller stöds inte.\n"
+"För bästa resultat, installera libvisio-tools."
 
 #: vsdview/converter.py:423
 msgid ""
@@ -66,6 +74,8 @@ msgid ""
 "cairosvg is required for PDF export. Install it:\n"
 "  pip install cairosvg"
 msgstr ""
+"cairosvg krävs för PDF-export. Installera det:\n"
+"  pip install cairosvg"
 
 #: vsdview/window.py:53
 msgid "Open Visio file"
@@ -73,7 +83,7 @@ msgstr "Öppna Visio-fil"
 
 #: vsdview/window.py:59
 msgid "Find text"
-msgstr ""
+msgstr "Hitta text"
 
 #: vsdview/window.py:68
 msgid "Recent Files"
@@ -85,19 +95,19 @@ msgstr "Exportera som PNG"
 
 #: vsdview/window.py:72 vsdview/window.py:167
 msgid "Export as PDF"
-msgstr ""
+msgstr "Exportera som PDF"
 
 #: vsdview/window.py:73 vsdview/window.py:168
 msgid "Export as Text"
-msgstr ""
+msgstr "Exportera som text"
 
 #: vsdview/window.py:74
 msgid "Export"
-msgstr ""
+msgstr "Exportera"
 
 #: vsdview/window.py:76 vsdview/window.py:165
 msgid "Copy Text"
-msgstr ""
+msgstr "Kopiera text"
 
 #: vsdview/window.py:77
 msgid "Toggle Dark Theme"
@@ -122,11 +132,11 @@ msgstr "Ingen fil inläst"
 #: vsdview/window.py:229
 #, python-format
 msgid "%d match(es) found"
-msgstr ""
+msgstr "%d träffar hittades"
 
 #: vsdview/window.py:261
 msgid "Page"
-msgstr ""
+msgstr "Sida"
 
 #: vsdview/window.py:269
 msgid "Visio files"
