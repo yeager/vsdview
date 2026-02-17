@@ -1,15 +1,19 @@
 # SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR Daniel Nylander
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the vsdview package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+# 
+# Translators:
+# Daniel Nylander <po@danielnylander.se>, 2026
 # 
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: vsdview 0.1.0\n"
+"Project-Id-Version: vsdview 0.2.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-17 07:42+0100\n"
+"POT-Creation-Date: 2026-02-17 09:39+0100\n"
 "PO-Revision-Date: 2026-02-17 06:59+0000\n"
+"Last-Translator: Daniel Nylander <po@danielnylander.se>, 2026\n"
 "Language-Team: Swedish (https://app.transifex.com/danielnylander/teams/304899/sv/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -17,101 +21,133 @@ msgstr ""
 "Language: sv\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: vsdview/app.py:181
-msgid "not found"
-msgstr ""
-
-#: vsdview/converter.py:38
+#: vsdview/app.py:220
 msgid ""
-"LibreOffice not found. Install it:\n"
-"  Ubuntu/Debian: sudo apt install libreoffice\n"
-"  Fedora: sudo dnf install libreoffice\n"
-"  macOS: brew install --cask libreoffice"
+"Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
+"is not affiliated with or endorsed by Microsoft."
 msgstr ""
 
-#: vsdview/converter.py:59
+#: vsdview/app.py:232
+msgid "not found"
+msgstr "hittades inte"
+
+#: vsdview/converter.py:338
+#, python-format
+msgid "Unsupported file format: %s"
+msgstr ""
+
+#: vsdview/converter.py:353
 #, python-format
 msgid ""
-"LibreOffice conversion failed:\n"
-"%s"
+"Cannot open %s files without libvisio. Install it:\n"
+"  Ubuntu/Debian: sudo apt install libvisio-tools\n"
+"  Fedora: sudo dnf install libvisio-tools\n"
+"  macOS: brew install libvisio"
 msgstr ""
 
-#: vsdview/converter.py:88
+#: vsdview/converter.py:360
 msgid ""
-"Conversion produced no SVG output. The file may be corrupt or unsupported."
+"Could not parse the Visio file. The file may be corrupt or unsupported.\n"
+"For best results, install libvisio-tools."
 msgstr ""
 
-#: vsdview/converter.py:114
+#: vsdview/converter.py:423
 msgid ""
 "Neither rsvg-convert nor cairosvg found. Install one:\n"
 "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
 "  pip install cairosvg"
 msgstr ""
+"Varken rsvg-convert eller cairosvg hittades. Installera ett av dem:\n"
+"  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
+"  pip install cairosvg"
 
-#: vsdview/window.py:40
-msgid "Open Visio file"
-msgstr ""
-
-#: vsdview/window.py:50
-msgid "Recent Files"
-msgstr ""
-
-#: vsdview/window.py:52
-msgid "Toggle Dark Theme"
+#: vsdview/converter.py:437
+msgid ""
+"cairosvg is required for PDF export. Install it:\n"
+"  pip install cairosvg"
 msgstr ""
 
 #: vsdview/window.py:53
-msgid "Keyboard Shortcuts"
+msgid "Open Visio file"
+msgstr "Öppna Visio-fil"
+
+#: vsdview/window.py:59
+msgid "Find text"
 msgstr ""
 
-#: vsdview/window.py:54
+#: vsdview/window.py:68
+msgid "Recent Files"
+msgstr "Senaste filer"
+
+#: vsdview/window.py:71 vsdview/window.py:166
 msgid "Export as PNG"
+msgstr "Exportera som PNG"
+
+#: vsdview/window.py:72 vsdview/window.py:167
+msgid "Export as PDF"
 msgstr ""
 
-#: vsdview/window.py:55
+#: vsdview/window.py:73 vsdview/window.py:168
+msgid "Export as Text"
+msgstr ""
+
+#: vsdview/window.py:74
+msgid "Export"
+msgstr ""
+
+#: vsdview/window.py:76 vsdview/window.py:165
+msgid "Copy Text"
+msgstr ""
+
+#: vsdview/window.py:77
+msgid "Toggle Dark Theme"
+msgstr "Växla till mörkt tema"
+
+#: vsdview/window.py:78
+msgid "Keyboard Shortcuts"
+msgstr "Tangentbordsgenvägar"
+
+#: vsdview/window.py:79
 msgid "About"
-msgstr ""
+msgstr "Om"
 
-#: vsdview/window.py:56
+#: vsdview/window.py:80
 msgid "Quit"
-msgstr ""
+msgstr "Avsluta"
 
-#: vsdview/window.py:81 vsdview/window.py:120
+#: vsdview/window.py:136 vsdview/window.py:264
 msgid "No file loaded"
+msgstr "Ingen fil inläst"
+
+#: vsdview/window.py:229
+#, python-format
+msgid "%d match(es) found"
 msgstr ""
 
-#: vsdview/window.py:125
+#: vsdview/window.py:261
+msgid "Page"
+msgstr ""
+
+#: vsdview/window.py:269
 msgid "Visio files"
-msgstr ""
+msgstr "Visio-filer"
 
-#: vsdview/window.py:145
-msgid "LibreOffice not found"
-msgstr ""
-
-#: vsdview/window.py:146
-msgid "Install LibreOffice to open Visio files."
-msgstr ""
-
-#: vsdview/window.py:149
-msgid "LibreOffice is required but was not found on your system."
-msgstr ""
-
-#: vsdview/window.py:158
+#: vsdview/window.py:291
 msgid "Conversion failed"
-msgstr ""
+msgstr "Konvertering misslyckades"
 
-#: vsdview/window.py:165
+#: vsdview/window.py:296
 msgid "No SVG output produced."
-msgstr ""
+msgstr "Ingen SVG-utdata producerad."
 
-#: vsdview/window.py:216
+#: vsdview/window.py:394 vsdview/window.py:421 vsdview/window.py:477
 msgid "No file loaded to export."
-msgstr ""
+msgstr "Ingen fil inläst för export."
 
-#: vsdview/window.py:271
+#: vsdview/window.py:528
 msgid "Error"
-msgstr ""
+msgstr "Fel"
 
-#: vsdview/window.py:274
+#: vsdview/window.py:531
 msgid "OK"
-msgstr ""
+msgstr "OK"
