@@ -37,10 +37,30 @@ jobs:
       - name: Build .rpm
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          cat > vsdview.spec << SPEC
+          # Build directly without rpmbuild spec %install issues
+          PKG=buildroot
+          mkdir -p $PKG/usr/lib/python3/dist-packages/vsdview
+          mkdir -p $PKG/usr/bin
+          mkdir -p $PKG/usr/share/locale
+
+          cp vsdview/*.py $PKG/usr/lib/python3/dist-packages/vsdview/
+
+          for mo in locale/*/LC_MESSAGES/vsdview.mo; do
+            [ -f "$mo" ] || continue
+            lang=$(echo "$mo" | cut -d/ -f2)
+            mkdir -p $PKG/usr/share/locale/$lang/LC_MESSAGES
+            cp "$mo" $PKG/usr/share/locale/$lang/LC_MESSAGES/
+          done
+
+          printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > $PKG/usr/bin/vsdview
+          chmod +x $PKG/usr/bin/vsdview
+
+          python3 -c "
+          import textwrap
+          spec = textwrap.dedent('''\
           Name:           vsdview
-          Version:        ${VERSION}
-          Release:        1%{?dist}
+          Version:        $VERSION
+          Release:        1%{{?dist}}
           Summary:        Read-only viewer for Microsoft Visio files
           License:        GPL-3.0-or-later
           URL:            https://github.com/yeager/vsdview
@@ -54,24 +74,23 @@ jobs:
 
           %description
           VSDView is a minimal read-only viewer for Microsoft Visio files
-          (.vsdx and .vsd), built with GTK4 and libadwaita. Uses a built-in
-          .vsdx parser with optional libvisio support for legacy .vsd files.
+          (.vsdx and .vsd), built with GTK4 and libadwaita.
 
           %install
-          mkdir -p %{buildroot}/usr/lib/python3/dist-packages/vsdview
-          mkdir -p %{buildroot}/usr/bin
-          cp vsdview/*.py %{buildroot}/usr/lib/python3/dist-packages/vsdview/
-          printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > %{buildroot}/usr/bin/vsdview
-          chmod +x %{buildroot}/usr/bin/vsdview
+          # Already populated by CI step
 
           %files
           /usr/lib/python3/dist-packages/vsdview/
           /usr/bin/vsdview
-          SPEC
-          sed -i 's/^          //' vsdview.spec
+          /usr/share/locale/
+          ''')
+          with open('vsdview.spec', 'w') as f:
+              f.write(spec)
+          "
+
           rpmbuild -bb vsdview.spec \
             --define "_topdir $(pwd)/rpmbuild" \
-            --buildroot "$(pwd)/buildroot"
+            --buildroot "$(pwd)/$PKG"
           cp rpmbuild/RPMS/noarch/*.rpm .
         env:
           VERSION: ${{ github.ref_name }}
