@@ -158,7 +158,7 @@ def _hsl_to_rgb(h: int, s: int, l: int) -> str:
     return f"#{int(r*255):02X}{int(g*255):02X}{int(b*255):02X}"
 
 
-def _resolve_color(val: str) -> str:
+def _resolve_color(val: str, theme_colors: dict[str, str] | None = None) -> str:
     """Convert a Visio color value to an SVG color string.
 
     Handles: color index, #RRGGBB, RGB(r,g,b), HSL(h,s,l), THEMEVAL(), etc.
@@ -168,8 +168,31 @@ def _resolve_color(val: str) -> str:
         return ""
     val = val.strip()
 
-    # THEMEVAL or formula — return empty (use default, not black)
-    if "THEMEVAL" in val or "THEME" in val or val.startswith("="):
+    # THEMEVAL or formula — try to resolve from theme colors
+    if "THEMEVAL" in val or "THEMEGUARD" in val:
+        if theme_colors:
+            # Extract THEMEVAL argument: THEMEVAL("accent1",0) or THEMEVAL(0)
+            m = re.search(r'THEMEVAL\s*\(\s*"?(\w+)"?', val, re.IGNORECASE)
+            if m:
+                key = m.group(1).lower()
+                if key in theme_colors:
+                    return theme_colors[key]
+                # Try numeric
+                try:
+                    idx = int(key)
+                    if str(idx) in theme_colors:
+                        return theme_colors[str(idx)]
+                except ValueError:
+                    pass
+            # THEMEGUARD(THEMEVAL(...))
+            m2 = re.search(r'THEMEVAL\s*\(\s*(\d+)', val, re.IGNORECASE)
+            if m2:
+                idx = m2.group(1)
+                if idx in theme_colors:
+                    return theme_colors[idx]
+        return ""
+
+    if val.startswith("=") or "THEME" in val:
         return ""
 
     # #RRGGBB or #RGB
@@ -239,6 +262,97 @@ def _escape_xml(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Embedded image support
 # ---------------------------------------------------------------------------
+
+def _parse_theme(zf: zipfile.ZipFile) -> dict[str, str]:
+    """Parse theme colors from visio/theme/theme1.xml.
+
+    Returns a dict mapping theme color names to #RRGGBB values.
+    Keys: dk1, lt1, dk2, lt2, accent1-6, hlink, folHlink
+    Also maps numeric indices used by Visio THEMEVAL:
+      0->dk1, 1->lt1, 2->dk2, 3->lt2, 4->accent1, ..., 9->accent6,
+      10->hlink, 11->folHlink
+    """
+    _DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    theme_colors: dict[str, str] = {}
+
+    # Try theme1.xml first, then theme2.xml
+    for theme_file in ("visio/theme/theme1.xml", "visio/theme/theme2.xml"):
+        try:
+            theme_xml = zf.read(theme_file)
+        except (KeyError, zipfile.BadZipFile):
+            continue
+
+        try:
+            root = ET.fromstring(theme_xml)
+        except ET.ParseError:
+            continue
+
+        # Find clrScheme
+        for clr_scheme in root.iter(f"{{{_DML_NS}}}clrScheme"):
+            color_names = [
+                "dk1", "lt1", "dk2", "lt2",
+                "accent1", "accent2", "accent3", "accent4",
+                "accent5", "accent6", "hlink", "folHlink",
+            ]
+            for cname in color_names:
+                elem = clr_scheme.find(f"{{{_DML_NS}}}{cname}")
+                if elem is None:
+                    continue
+                # Look for srgbClr or sysClr
+                srgb = elem.find(f"{{{_DML_NS}}}srgbClr")
+                if srgb is not None:
+                    val = srgb.get("val", "")
+                    if val:
+                        theme_colors[cname] = f"#{val}"
+                else:
+                    sys_clr = elem.find(f"{{{_DML_NS}}}sysClr")
+                    if sys_clr is not None:
+                        val = sys_clr.get("lastClr", "") or sys_clr.get("val", "")
+                        if val and len(val) == 6:
+                            theme_colors[cname] = f"#{val}"
+
+            break  # Only use the first clrScheme found
+
+        if theme_colors:
+            break  # Got colors from this theme file
+
+    # Build numeric index mapping (Visio theme color indices)
+    _idx_map = {
+        0: "dk1", 1: "lt1", 2: "dk2", 3: "lt2",
+        4: "accent1", 5: "accent2", 6: "accent3", 7: "accent4",
+        8: "accent5", 9: "accent6", 10: "hlink", 11: "folHlink",
+    }
+    for idx, name in _idx_map.items():
+        if name in theme_colors:
+            theme_colors[str(idx)] = theme_colors[name]
+
+    return theme_colors
+
+
+def _parse_layers(page_xml_root: ET.Element) -> dict[str, dict]:
+    """Parse layer definitions from a page's PageSheet.
+
+    Returns {layer_index: {"name": str, "visible": bool}} .
+    """
+    layers: dict[str, dict] = {}
+    page_sheet = page_xml_root.find(f"{_VTAG}PageSheet")
+    if page_sheet is None:
+        return layers
+
+    for section in page_sheet.findall(f"{_VTAG}Section"):
+        if section.get("N") != "Layer":
+            continue
+        for row in section.findall(f"{_VTAG}Row"):
+            ix = row.get("IX", "")
+            cells = {}
+            for cell in row.findall(f"{_VTAG}Cell"):
+                cells[cell.get("N", "")] = cell.get("V", "")
+            visible = cells.get("Visible", "1") != "0"
+            name = cells.get("Name", f"Layer {ix}")
+            layers[ix] = {"name": name, "visible": visible}
+
+    return layers
+
 
 def _extract_media(zf: zipfile.ZipFile) -> dict[str, bytes]:
     """Extract all files from visio/media/ in the ZIP.
@@ -388,6 +502,41 @@ def _arrow_marker_defs(used_markers: set[str]) -> list[str]:
 
     lines.append("</defs>")
     return lines
+
+
+def _gradient_defs(gradients: dict[str, dict]) -> list[str]:
+    """Generate SVG <defs> for gradient fills.
+
+    gradients: {grad_id: {"start": color, "end": color, "dir": angle_deg}}
+    """
+    if not gradients:
+        return []
+    lines = []
+    for gid, g in sorted(gradients.items()):
+        angle = g.get("dir", 0)
+        # Convert angle to x1,y1,x2,y2 for linearGradient
+        rad = math.radians(angle)
+        x1 = 50 - 50 * math.cos(rad)
+        y1 = 50 + 50 * math.sin(rad)
+        x2 = 50 + 50 * math.cos(rad)
+        y2 = 50 - 50 * math.sin(rad)
+        lines.append(
+            f'<linearGradient id="{gid}" '
+            f'x1="{x1:.1f}%" y1="{y1:.1f}%" x2="{x2:.1f}%" y2="{y2:.1f}%">'
+            f'<stop offset="0%" stop-color="{g["start"]}"/>'
+            f'<stop offset="100%" stop-color="{g["end"]}"/>'
+            f'</linearGradient>'
+        )
+    return lines
+
+
+def _shadow_filter_def() -> str:
+    """Return SVG filter definition for drop shadows."""
+    return (
+        '<filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">'
+        '<feDropShadow dx="2" dy="2" stdDeviation="1.5" flood-color="#00000040"/>'
+        '</filter>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -974,7 +1123,11 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                        media: dict | None = None,
                        page_rels: dict | None = None,
                        used_markers: set | None = None,
-                       output_dir: str | None = None) -> list[str]:
+                       output_dir: str | None = None,
+                       theme_colors: dict | None = None,
+                       layers: dict | None = None,
+                       gradients: dict | None = None,
+                       has_shadow: set | None = None) -> list[str]:
     """Render a single shape as SVG elements. Returns list of SVG strings."""
     shape = _merge_shape_with_master(shape, masters, parent_master_id)
     if media is None:
@@ -983,6 +1136,14 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         page_rels = {}
     if used_markers is None:
         used_markers = set()
+    if theme_colors is None:
+        theme_colors = {}
+    if layers is None:
+        layers = {}
+    if gradients is None:
+        gradients = {}
+    if has_shadow is None:
+        has_shadow = set()
 
     lines = []
 
@@ -990,6 +1151,20 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     vis_val = _get_cell_val(shape, "Visible")
     if vis_val == "0":
         return lines
+
+    # Layer visibility check
+    layer_member = _get_cell_val(shape, "LayerMember")
+    if layer_member and layers:
+        # LayerMember can be "0", "1", "0;1" etc.
+        layer_ids = [lm.strip() for lm in layer_member.split(";")]
+        all_hidden = True
+        for lid in layer_ids:
+            layer_info = layers.get(lid, {})
+            if layer_info.get("visible", True):
+                all_hidden = False
+                break
+        if all_hidden:
+            return lines
 
     # Skip shapes with only connection points and no geometry/text (connection markers)
     if (shape.get("connections") and not shape.get("geometry")
@@ -1011,18 +1186,27 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     elif line_weight > 20:
         line_weight = 20
 
-    line_color = _resolve_color(_get_cell_val(shape, "LineColor")) or "#333333"
-    fill_foregnd = _resolve_color(_get_cell_val(shape, "FillForegnd"))
-    fill_bkgnd = _resolve_color(_get_cell_val(shape, "FillBkgnd"))
+    line_color = _resolve_color(_get_cell_val(shape, "LineColor"), theme_colors) or "#333333"
+    fill_foregnd = _resolve_color(_get_cell_val(shape, "FillForegnd"), theme_colors)
+    fill_bkgnd = _resolve_color(_get_cell_val(shape, "FillBkgnd"), theme_colors)
+
+    # Also try resolving via formula if value is a color index
+    _ff_formula = shape.get("cells", {}).get("FillForegnd", {}).get("F", "")
+    _fb_formula = shape.get("cells", {}).get("FillBkgnd", {}).get("F", "")
 
     # GUARD(color_index) in Visio stencils are theme accent placeholders.
-    # Replace magenta (#FF00FF, color 6) with a sensible default accent.
-    _ff_formula = shape.get("cells", {}).get("FillForegnd", {}).get("F", "")
+    # Replace magenta (#FF00FF, color 6) with theme accent or sensible default.
     if "GUARD" in _ff_formula and fill_foregnd == "#FF00FF":
-        fill_foregnd = "#5B9BD5"  # Default blue accent
-    _fb_formula = shape.get("cells", {}).get("FillBkgnd", {}).get("F", "")
+        fill_foregnd = theme_colors.get("accent1", "#5B9BD5")
     if "GUARD" in _fb_formula and fill_bkgnd == "#FF00FF":
-        fill_bkgnd = "#5B9BD5"
+        fill_bkgnd = theme_colors.get("accent1", "#5B9BD5")
+
+    # If fill colors are still empty but formulas reference theme, use accent1
+    if not fill_foregnd and _ff_formula and ("THEME" in _ff_formula or "GUARD" in _ff_formula):
+        fill_foregnd = theme_colors.get("accent1", "")
+    if not fill_bkgnd and _fb_formula and ("THEME" in _fb_formula or "GUARD" in _fb_formula):
+        fill_bkgnd = theme_colors.get("accent1", "")
+
     fill_pattern = _get_cell_val(shape, "FillPattern", "1")
     line_pattern = int(_safe_float(_get_cell_val(shape, "LinePattern", "1")))
     rounding = _get_cell_float(shape, "Rounding") * _INCH_TO_PX
@@ -1034,19 +1218,34 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     elif fill_pat_int == 1:
         # Solid fill
         fill = fill_foregnd or fill_bkgnd or "none"
+    elif 25 <= fill_pat_int <= 40:
+        # Gradient fill
+        start_color = fill_foregnd or "#FFFFFF"
+        end_color = fill_bkgnd or fill_foregnd or "#CCCCCC"
+        grad_dir = _get_cell_float(shape, "FillGradientDir")
+        # Map Visio gradient direction to angle
+        grad_angle = grad_dir * 45 if grad_dir else 0  # approximate
+        grad_id = f"grad_{shape['id']}_{fill_pat_int}"
+        gradients[grad_id] = {"start": start_color, "end": end_color, "dir": grad_angle}
+        fill = f"url(#{grad_id})"
     elif fill_pat_int >= 2:
-        # Pattern/texture fill — we can't render actual patterns, so approximate.
-        # Use FillBkgnd as the visible base if available and not black.
-        # FillForegnd=0 (black) with pattern > 1 is typically a theme placeholder.
+        # Pattern/texture fill — approximate with blend
         if fill_bkgnd and not _is_black(fill_bkgnd):
             fill = fill_bkgnd
         elif fill_foregnd and not _is_black(fill_foregnd):
             fill = _lighten_color(fill_foregnd, 0.7)
         else:
-            # FillForegnd is black/missing with complex pattern = theme placeholder
             fill = "none"
     else:
         fill = "none"
+
+    # Shadow support
+    shdw_pattern = _get_cell_val(shape, "ShdwPattern")
+    shape_has_shadow = shdw_pattern and shdw_pattern != "0"
+    shadow_attr = ""
+    if shape_has_shadow:
+        has_shadow.add("shadow")
+        shadow_attr = ' filter="url(#shadow)"'
 
     # No line if pattern 0
     stroke = line_color if line_pattern != 0 else "none"
@@ -1089,16 +1288,17 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             f'</clipPath></defs>'
         )
         lines.append(
-            f'<g transform="{transform}" clip-path="url(#{clip_id})">'
+            f'<g transform="{transform}" clip-path="url(#{clip_id})"{shadow_attr}>'
         )
         for sub in shape.get("sub_shapes", []):
             lines.extend(_render_shape_svg(
                 sub, group_h, masters, group_master_id, _depth + 1,
-                media, page_rels, used_markers, output_dir))
+                media, page_rels, used_markers, output_dir,
+                theme_colors, layers, gradients, has_shadow))
         lines.append('</g>')
         # Render text for the group itself, or shape name as label
         if shape["text"]:
-            _append_text_svg(lines, shape, page_h, w_px, h_px)
+            _append_text_svg(lines, shape, page_h, w_px, h_px, theme_colors)
         elif _depth == 0:
             label = shape.get("name_u") or shape.get("name", "")
             if label and label not in ("Sheet", "Group"):
@@ -1134,7 +1334,7 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 geo_style += f' stroke-dasharray="{dash_array}"'
 
             lines.append(
-                f'<path d="{path_d}" {geo_style} '
+                f'<path d="{path_d}" {geo_style}{shadow_attr} '
                 f'transform="{transform}"/>'
             )
 
@@ -1245,7 +1445,7 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     # --- Text rendering ---
     if shape["text"]:
-        _append_text_svg(lines, shape, page_h, w_px, h_px)
+        _append_text_svg(lines, shape, page_h, w_px, h_px, theme_colors)
 
     # No fallback rectangle for shapes inside groups (sub-shapes)
     # is handled by skipping the else branch when geometry/1D absent
@@ -1255,7 +1455,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
 
 def _append_text_svg(lines: list, shape: dict, page_h: float,
-                     w_px: float, h_px: float):
+                     w_px: float, h_px: float,
+                     theme_colors: dict | None = None):
     """Append SVG text elements for a shape's text."""
     text = shape["text"]
     if not text:
@@ -1282,7 +1483,7 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     elif font_size > 72:
         font_size = 72
 
-    text_color = _resolve_color(char_fmt.get("Color", "")) or "#000000"
+    text_color = _resolve_color(char_fmt.get("Color", ""), theme_colors) or "#000000"
     style_bits = int(_safe_float(char_fmt.get("Style", "0")))
     is_bold = bool(style_bits & 1)
     is_italic = bool(style_bits & 2)
@@ -1293,6 +1494,19 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     halign = int(_safe_float(para_fmt.get("HorzAlign", "1")))
     anchor_map = {0: "start", 1: "middle", 2: "end"}
     text_anchor = anchor_map.get(halign, "middle")
+
+    # Vertical alignment (0=top, 1=middle, 2=bottom)
+    vert_align = int(_safe_float(_get_cell_val(shape, "VerticalAlign", "1")))
+
+    # Text rotation (TxtAngle in radians)
+    txt_angle = _get_cell_float(shape, "TxtAngle")
+    txt_rotate = ""
+    if abs(txt_angle) > 1e-6:
+        txt_angle_deg = -math.degrees(txt_angle)
+        txt_rotate = f' transform="rotate({txt_angle_deg:.1f},{tx:.2f},{ty:.2f})"'
+
+    # Bullet support
+    bullet = int(_safe_float(para_fmt.get("Bullet", "0")))
 
     # Font weight/style
     fw = ' font-weight="bold"' if is_bold else ""
@@ -1305,6 +1519,11 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
 
     # Split text into lines, then wrap long lines
     text_lines = text.split("\n")
+
+    # Add bullet prefix
+    if bullet > 0:
+        bullet_char = "• " if bullet == 1 else "‣ " if bullet == 2 else "– "
+        text_lines = [bullet_char + tl if tl.strip() else tl for tl in text_lines]
 
     # Simple word-wrap: estimate chars per line from font size
     if txt_width_px > 0 and font_size > 0:
@@ -1327,19 +1546,34 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                     wrapped_lines.append(current)
         text_lines = wrapped_lines
 
+    # Compute vertical position based on VerticalAlign
+    total_height = len(text_lines) * font_size * 1.2
+
     if len(text_lines) == 1:
+        # Single line: apply vertical alignment
+        if vert_align == 0:  # top
+            ty = pin_y - h_px / 2 + font_size
+        elif vert_align == 2:  # bottom
+            ty = pin_y + h_px / 2 - font_size * 0.3
+        # else middle (default)
+
         escaped = _escape_xml(text_lines[0])
         lines.append(
             f'<text x="{tx:.2f}" y="{ty:.2f}" '
             f'text-anchor="{text_anchor}" dominant-baseline="central" '
             f'font-family="sans-serif" font-size="{font_size:.1f}" '
-            f'fill="{text_color}"{fw}{fs}{td}>'
+            f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}>'
             f'{escaped}</text>'
         )
     else:
-        # Multi-line text
-        total_height = len(text_lines) * font_size * 1.2
-        start_y = ty - total_height / 2 + font_size * 0.6
+        # Multi-line text with vertical alignment
+        if vert_align == 0:  # top
+            start_y = pin_y - h_px / 2 + font_size
+        elif vert_align == 2:  # bottom
+            start_y = pin_y + h_px / 2 - total_height + font_size * 0.6
+        else:  # middle
+            start_y = ty - total_height / 2 + font_size * 0.6
+
         for j, tline in enumerate(text_lines):
             if not tline.strip():
                 continue
@@ -1349,7 +1583,7 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 f'<text x="{tx:.2f}" y="{ly:.2f}" '
                 f'text-anchor="{text_anchor}" '
                 f'font-family="sans-serif" font-size="{font_size:.1f}" '
-                f'fill="{text_color}"{fw}{fs}{td}>'
+                f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}>'
                 f'{escaped}</text>'
             )
 
@@ -1583,7 +1817,9 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
                    page_rels: dict | None = None,
                    bg_shapes: list[dict] | None = None,
                    bg_connects: list[dict] | None = None,
-                   output_dir: str | None = None) -> str:
+                   output_dir: str | None = None,
+                   theme_colors: dict | None = None,
+                   layers: dict | None = None) -> str:
     """Generate SVG string from parsed shapes."""
     ET.register_namespace("", "http://www.w3.org/2000/svg")
     ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
@@ -1606,8 +1842,14 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
         media = {}
     if page_rels is None:
         page_rels = {}
+    if theme_colors is None:
+        theme_colors = {}
+    if layers is None:
+        layers = {}
 
     used_markers: set[str] = set()
+    gradients: dict[str, dict] = {}
+    has_shadow: set[str] = set()
 
     # Render background page shapes first (behind foreground)
     if bg_shapes:
@@ -1616,7 +1858,8 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
             svg_elements = _render_shape_svg(
                 s, page_h, masters, media=media,
                 page_rels=page_rels, used_markers=used_markers,
-                output_dir=output_dir)
+                output_dir=output_dir, theme_colors=theme_colors,
+                layers=layers, gradients=gradients, has_shadow=has_shadow)
             svg_lines.extend(svg_elements)
         if bg_connects:
             bg_index = _build_shape_index(bg_shapes)
@@ -1628,7 +1871,8 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
         svg_elements = _render_shape_svg(
             s, page_h, masters, media=media,
             page_rels=page_rels, used_markers=used_markers,
-            output_dir=output_dir)
+            output_dir=output_dir, theme_colors=theme_colors,
+            layers=layers, gradients=gradients, has_shadow=has_shadow)
         svg_lines.extend(svg_elements)
 
     # Render connections
@@ -1639,11 +1883,23 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
 
     svg_lines.append("</svg>")
 
-    # Insert marker defs after the opening <svg> tag if needed
+    # Build a single <defs> block with all definitions
+    defs_content = []
     if used_markers:
+        # _arrow_marker_defs returns ["<defs>", ...markers..., "</defs>"]
         marker_lines = _arrow_marker_defs(used_markers)
-        # Insert after the background rect (index 3)
-        for j, ml in enumerate(marker_lines):
+        # Extract content between <defs> and </defs>
+        for ml in marker_lines:
+            if ml.strip() not in ("<defs>", "</defs>"):
+                defs_content.append(ml)
+    if gradients:
+        defs_content.extend(_gradient_defs(gradients))
+    if has_shadow:
+        defs_content.append(_shadow_filter_def())
+
+    if defs_content:
+        defs_lines = ["<defs>"] + defs_content + ["</defs>"]
+        for j, ml in enumerate(defs_lines):
             svg_lines.insert(3 + j, ml)
 
     return "\n".join(svg_lines)
@@ -1836,12 +2092,14 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
     with zipfile.ZipFile(input_path, "r") as zf:
         masters = _parse_master_shapes(zf)
         media = _extract_media(zf)
+        theme_colors = _parse_theme(zf)
         page_files = _get_page_files(zf)
         all_dims = _parse_all_page_dimensions(zf)
         bg_map = _parse_background_pages(zf)
 
         # Pre-parse all pages for background composition
-        page_cache: dict[int, tuple] = {}  # idx -> (shapes, connects, page_rels)
+        # idx -> (shapes, connects, page_rels, layers)
+        page_cache: dict[int, tuple] = {}
 
         for i, page_file in enumerate(page_files):
             try:
@@ -1853,17 +2111,19 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
             try:
                 page_root = ET.fromstring(page_xml)
                 connects = _parse_connects(page_root)
+                page_layers = _parse_layers(page_root)
             except ET.ParseError:
                 connects = []
+                page_layers = {}
 
             page_rels = _parse_rels(zf, page_file)
-            page_cache[i] = (shapes, connects, page_rels)
+            page_cache[i] = (shapes, connects, page_rels, page_layers)
 
         for i, page_file in enumerate(page_files):
             if i not in page_cache:
                 continue
 
-            shapes, connects, page_rels = page_cache[i]
+            shapes, connects, page_rels, page_layers = page_cache[i]
             if not shapes:
                 continue
 
@@ -1882,11 +2142,12 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
             if i in bg_map:
                 bg_idx = bg_map[i]
                 if bg_idx in page_cache:
-                    bg_shapes, bg_connects, _ = page_cache[bg_idx]
+                    bg_shapes, bg_connects, _, _ = page_cache[bg_idx]
 
             svg_content = _shapes_to_svg(
                 shapes, page_w, page_h, masters, connects,
-                media, page_rels, bg_shapes, bg_connects, output_dir)
+                media, page_rels, bg_shapes, bg_connects, output_dir,
+                theme_colors, page_layers)
             svg_path = os.path.join(output_dir, f"{basename}_page{i + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
@@ -2025,6 +2286,7 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
         with zipfile.ZipFile(input_path, "r") as zf:
             masters = _parse_master_shapes(zf)
             media = _extract_media(zf)
+            theme_colors = _parse_theme(zf)
             page_files = _get_page_files(zf)
             all_dims = _parse_all_page_dimensions(zf)
             bg_map = _parse_background_pages(zf)
@@ -2044,8 +2306,10 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
             try:
                 page_root = ET.fromstring(page_xml)
                 connects = _parse_connects(page_root)
+                page_layers = _parse_layers(page_root)
             except ET.ParseError:
                 connects = []
+                page_layers = {}
 
             page_rels = _parse_rels(zf, page_file)
 
@@ -2065,7 +2329,8 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
 
             svg_content = _shapes_to_svg(
                 shapes, page_w, page_h, masters, connects,
-                media, page_rels, bg_shapes, bg_connects, output_dir)
+                media, page_rels, bg_shapes, bg_connects, output_dir,
+                theme_colors, page_layers)
             svg_path = os.path.join(output_dir, f"{basename}_page{page_index + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
