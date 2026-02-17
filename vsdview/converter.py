@@ -105,8 +105,37 @@ def _convert_with_libvisio(input_path: str, output_dir: str, page: int | None = 
     return svg_files
 
 
-def _parse_vsdx_shapes(page_xml: bytes) -> list[dict]:
-    """Parse shapes from a Visio page XML."""
+def _parse_master_texts(zf: zipfile.ZipFile) -> dict[str, dict[str, str]]:
+    """Parse text from master shapes. Returns {master_id: {shape_id: text}}."""
+    masters = {}
+    for name in zf.namelist():
+        if name.startswith("visio/masters/master") and name.endswith(".xml") and "masters.xml" not in name:
+            # Extract master ID from filename (e.g., master2.xml -> "2")
+            master_num = Path(name).stem.replace("master", "")
+            try:
+                root = ET.fromstring(zf.read(name))
+            except (ET.ParseError, KeyError):
+                continue
+            shape_texts = {}
+            for shape in root.iter(f"{{{_NS['v']}}}Shape"):
+                shape_id = shape.get("ID", "")
+                text_elem = shape.find(f"{{{_NS['v']}}}Text")
+                if text_elem is not None:
+                    text = "".join(text_elem.itertext()).strip()
+                    if text:
+                        shape_texts[shape_id] = text
+            if shape_texts:
+                masters[master_num] = shape_texts
+    return masters
+
+
+def _parse_vsdx_shapes(page_xml: bytes, master_texts: dict | None = None) -> list[dict]:
+    """Parse shapes from a Visio page XML.
+
+    Args:
+        page_xml: Raw XML bytes of a page file.
+        master_texts: Optional dict from _parse_master_texts for text inheritance.
+    """
     shapes = []
     try:
         root = ET.fromstring(page_xml)
@@ -115,6 +144,8 @@ def _parse_vsdx_shapes(page_xml: bytes) -> list[dict]:
 
     for shape in root.iter(f"{{{_NS['v']}}}Shape"):
         s = {"type": "shape", "x": 0, "y": 0, "w": 72, "h": 36, "text": ""}
+
+        master_id = shape.get("Master", "")
 
         for cell in shape.findall(f"{{{_NS['v']}}}Cell"):
             name = cell.get("N", "")
@@ -136,6 +167,15 @@ def _parse_vsdx_shapes(page_xml: bytes) -> list[dict]:
         text_elem = shape.find(f"{{{_NS['v']}}}Text")
         if text_elem is not None:
             s["text"] = "".join(text_elem.itertext()).strip()
+
+        # Inherit text from master if shape has no own text
+        if not s["text"] and master_id and master_texts:
+            master_shape_texts = master_texts.get(master_id, {})
+            # Use the first non-placeholder text from the master
+            for _sid, mtext in master_shape_texts.items():
+                if mtext and mtext not in ("Label", "Abc"):
+                    s["text"] = mtext
+                    break
 
         shapes.append(s)
 
@@ -224,6 +264,7 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
     svg_files = []
 
     with zipfile.ZipFile(input_path, "r") as zf:
+        master_texts = _parse_master_texts(zf)
         page_files = _get_page_files(zf)
 
         for i, page_file in enumerate(page_files):
@@ -232,7 +273,7 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
             except (KeyError, zipfile.BadZipFile):
                 continue
 
-            shapes = _parse_vsdx_shapes(page_xml)
+            shapes = _parse_vsdx_shapes(page_xml, master_texts)
             if not shapes:
                 continue
 
@@ -263,6 +304,7 @@ def get_page_info(input_path: str) -> list[dict]:
             return pages
 
         with zipfile.ZipFile(input_path, "r") as zf:
+            master_texts = _parse_master_texts(zf)
             page_names = _parse_vsdx_page_names(zf)
             page_files = _get_page_files(zf)
 
@@ -272,7 +314,7 @@ def get_page_info(input_path: str) -> list[dict]:
                 except (KeyError, zipfile.BadZipFile):
                     continue
 
-                shapes = _parse_vsdx_shapes(page_xml)
+                shapes = _parse_vsdx_shapes(page_xml, master_texts)
                 name = page_names[i] if i < len(page_names) else f"Page {i + 1}"
                 pages.append({"name": name, "shapes": shapes, "index": i})
 
@@ -378,12 +420,13 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
     # Built-in parser for .vsdx/.vssx
     if ext in (".vsdx", ".vssx", ".vssm") and zipfile.is_zipfile(input_path):
         with zipfile.ZipFile(input_path, "r") as zf:
+            master_texts = _parse_master_texts(zf)
             page_files = _get_page_files(zf)
             if page_index >= len(page_files):
                 return None
 
             page_xml = zf.read(page_files[page_index])
-            shapes = _parse_vsdx_shapes(page_xml)
+            shapes = _parse_vsdx_shapes(page_xml, master_texts)
             if not shapes:
                 return None
 
