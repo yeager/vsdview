@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "vsdview"
+version = "0.1.0"
+description = "A read-only viewer for Microsoft Visio files (.vsdx/.vsd)"
+license = "GPL-3.0-or-later"
+authors = [
+    {name = "Daniel Nylander"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "PyGObject>=3.42",
+]
+
+[project.scripts]
+vsdview = "vsdview.__main__:main"
