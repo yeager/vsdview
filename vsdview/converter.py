@@ -3,10 +3,14 @@
 Backend priority:
 1. libvisio (vsd2xhtml) — lightweight, accurate
 2. Built-in .vsdx XML parser — zero dependencies, .vsdx only
+
+Author: Daniel Nylander <daniel@danielnylander.se>
 """
 
 import gettext
+import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,12 +25,1000 @@ _NS = {
     "v": "http://schemas.microsoft.com/office/visio/2012/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
 }
+_VNS = _NS["v"]
+_VTAG = f"{{{_VNS}}}"
 
 # Supported file extensions
 VISIO_EXTENSIONS = {".vsd", ".vsdx", ".vsdm"}
 STENCIL_EXTENSIONS = {".vss", ".vssx", ".vssm"}
 ALL_EXTENSIONS = VISIO_EXTENSIONS | STENCIL_EXTENSIONS
 
+# Visio color index table (standard colors)
+_VISIO_COLORS = {
+    0: "#000000",  # Black
+    1: "#FFFFFF",  # White
+    2: "#FF0000",  # Red
+    3: "#00FF00",  # Green
+    4: "#0000FF",  # Blue
+    5: "#FFFF00",  # Yellow
+    6: "#FF00FF",  # Magenta
+    7: "#00FFFF",  # Cyan
+    8: "#800000",  # Dark Red
+    9: "#008000",  # Dark Green
+    10: "#000080", # Dark Blue
+    11: "#808000", # Dark Yellow (Olive)
+    12: "#800080", # Dark Magenta (Purple)
+    13: "#008080", # Dark Cyan (Teal)
+    14: "#C0C0C0", # Light Gray
+    15: "#808080", # Dark Gray
+    16: "#993366", # Rose
+    17: "#333399", # Indigo
+    18: "#333333", # Charcoal
+    19: "#003300", # Forest
+    20: "#003366", # Marine
+    21: "#993300", # Brown
+    22: "#993366", # Plum
+    23: "#333399", # Navy
+    24: "#E6E6E6", # Pale Gray
+}
+
+# Visio line patterns
+_LINE_PATTERNS = {
+    0: "none",           # No line
+    1: "",               # Solid
+    2: "4,3",            # Dash
+    3: "1,3",            # Dot
+    4: "4,3,1,3",        # Dash-dot
+    5: "4,3,1,3,1,3",   # Dash-dot-dot
+    6: "8,3",            # Long dash
+    7: "1,1",            # Dense dot
+    8: "8,3,1,3",        # Long dash-dot
+    9: "8,3,1,3,1,3",   # Long dash-dot-dot
+    10: "12,6",          # Extra-long dash
+    16: "6,3,6,3",       # Dash-dash
+}
+
+# Inches to SVG pixels conversion
+_INCH_TO_PX = 72.0
+
+
+def _resolve_color(val: str) -> str:
+    """Convert a Visio color value to an SVG color string.
+
+    Handles: color index, #RRGGBB, RGB(r,g,b), THEMEVAL(), etc.
+    """
+    if not val:
+        return ""
+    val = val.strip()
+
+    # THEMEVAL or formula — return empty (use default)
+    if "THEMEVAL" in val or "THEME" in val or val.startswith("="):
+        return ""
+
+    # #RRGGBB or #RGB
+    if val.startswith("#"):
+        return val
+
+    # RGB(r,g,b) function
+    m = re.match(r"RGB\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", val, re.IGNORECASE)
+    if m:
+        r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"#{r:02X}{g:02X}{b:02X}"
+
+    # HSL function — approximate
+    m = re.match(r"HSL\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", val, re.IGNORECASE)
+    if m:
+        return ""  # Let it use default
+
+    # Numeric index
+    try:
+        idx = int(val)
+        return _VISIO_COLORS.get(idx, "#000000")
+    except ValueError:
+        pass
+
+    # Try float index
+    try:
+        idx = int(float(val))
+        return _VISIO_COLORS.get(idx, "#000000")
+    except (ValueError, TypeError):
+        pass
+
+    return ""
+
+
+def _get_dash_array(pattern: int, weight: float) -> str:
+    """Get SVG stroke-dasharray for a Visio line pattern."""
+    p = _LINE_PATTERNS.get(pattern, "")
+    if not p:
+        return ""
+    # Scale dash pattern by stroke weight
+    scale = max(weight, 0.5)
+    parts = [str(float(x) * scale) for x in p.split(",")]
+    return ",".join(parts)
+
+
+def _safe_float(val: str | None, default: float = 0.0) -> float:
+    """Parse a float value, returning default on failure."""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _escape_xml(text: str) -> str:
+    """Escape text for XML/SVG output."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Master shape parsing
+# ---------------------------------------------------------------------------
+
+def _parse_master_shapes(zf: zipfile.ZipFile) -> dict[str, dict]:
+    """Parse full shape data from master files.
+
+    Returns {master_id: {shape_id: shape_dict, ...}, ...}
+    Each shape_dict has: cells, geometry, text, char_formats, para_formats, sub_shapes
+    """
+    # First, read masters.xml to map Master ID to file
+    master_map = {}  # Master ID -> master file number
+    try:
+        masters_xml = zf.read("visio/masters/masters.xml")
+        root = ET.fromstring(masters_xml)
+        for master_el in root.findall(f"{_VTAG}Master"):
+            mid = master_el.get("ID", "")
+            rel_el = master_el.find(f"{{{_NS['r']}}}Rel")
+            if rel_el is None:
+                rel_el = master_el.find(f"Rel")
+            # Also try to find via Rel element with rId
+            # The master file number usually matches the ID
+            master_map[mid] = mid
+    except (KeyError, ET.ParseError):
+        pass
+
+    masters = {}
+    for name in zf.namelist():
+        if not (name.startswith("visio/masters/master") and name.endswith(".xml")):
+            continue
+        if "masters.xml" in name:
+            continue
+        master_num = Path(name).stem.replace("master", "")
+        try:
+            root = ET.fromstring(zf.read(name))
+        except (ET.ParseError, KeyError):
+            continue
+
+        shapes_data = {}
+        for shape in root.iter(f"{_VTAG}Shape"):
+            sd = _parse_single_shape(shape)
+            shapes_data[sd["id"]] = sd
+
+        if shapes_data:
+            masters[master_num] = shapes_data
+
+    return masters
+
+
+def _parse_single_shape(shape_elem: ET.Element) -> dict:
+    """Parse a single <Shape> element into a rich dict."""
+    sd = {
+        "id": shape_elem.get("ID", ""),
+        "name": shape_elem.get("Name", ""),
+        "name_u": shape_elem.get("NameU", ""),
+        "type": shape_elem.get("Type", "Shape"),
+        "master": shape_elem.get("Master", ""),
+        "master_shape": shape_elem.get("MasterShape", ""),
+        "cells": {},
+        "geometry": [],
+        "text": "",
+        "text_parts": [],
+        "char_formats": {},
+        "para_formats": {},
+        "sub_shapes": [],
+    }
+
+    # Parse top-level cells
+    for cell in shape_elem.findall(f"{_VTAG}Cell"):
+        n = cell.get("N", "")
+        v = cell.get("V", "")
+        f = cell.get("F", "")
+        sd["cells"][n] = {"V": v, "F": f}
+
+    # Parse Section elements
+    for section in shape_elem.findall(f"{_VTAG}Section"):
+        sec_name = section.get("N", "")
+
+        if sec_name == "Geometry":
+            geo = _parse_geometry_section(section)
+            if geo:
+                sd["geometry"].append(geo)
+
+        elif sec_name == "Character":
+            for row in section.findall(f"{_VTAG}Row"):
+                row_ix = row.get("IX", "0")
+                fmt = {}
+                for cell in row.findall(f"{_VTAG}Cell"):
+                    fmt[cell.get("N", "")] = cell.get("V", "")
+                sd["char_formats"][row_ix] = fmt
+
+        elif sec_name == "Paragraph":
+            for row in section.findall(f"{_VTAG}Row"):
+                row_ix = row.get("IX", "0")
+                fmt = {}
+                for cell in row.findall(f"{_VTAG}Cell"):
+                    fmt[cell.get("N", "")] = cell.get("V", "")
+                sd["para_formats"][row_ix] = fmt
+
+    # Also parse Geom sections that are direct children (alternative format)
+    for geom_idx in range(20):  # Max 20 geometry sections
+        geom_section = shape_elem.find(f"{_VTAG}Geom")
+        if geom_section is not None and geom_section not in []:
+            break
+
+    # Parse text
+    text_elem = shape_elem.find(f"{_VTAG}Text")
+    if text_elem is not None:
+        sd["text"] = "".join(text_elem.itertext()).strip()
+        sd["text_parts"] = _parse_text_element(text_elem)
+
+    # Parse sub-shapes (for groups)
+    shapes_container = shape_elem.find(f"{_VTAG}Shapes")
+    if shapes_container is not None:
+        for sub_shape in shapes_container.findall(f"{_VTAG}Shape"):
+            sd["sub_shapes"].append(_parse_single_shape(sub_shape))
+
+    return sd
+
+
+def _parse_geometry_section(section: ET.Element) -> dict:
+    """Parse a Geometry section into a list of geometry rows."""
+    geo = {"rows": [], "no_fill": False, "no_line": False, "no_show": False}
+
+    # Check section-level cells
+    for cell in section.findall(f"{_VTAG}Cell"):
+        n = cell.get("N", "")
+        v = cell.get("V", "0")
+        if n == "NoFill" and v == "1":
+            geo["no_fill"] = True
+        elif n == "NoLine" and v == "1":
+            geo["no_line"] = True
+        elif n == "NoShow" and v == "1":
+            geo["no_show"] = True
+
+    for row in section.findall(f"{_VTAG}Row"):
+        row_type = row.get("T", "")
+        row_data = {"type": row_type, "cells": {}}
+        for cell in row.findall(f"{_VTAG}Cell"):
+            n = cell.get("N", "")
+            v = cell.get("V", "")
+            f = cell.get("F", "")
+            row_data["cells"][n] = {"V": v, "F": f}
+        geo["rows"].append(row_data)
+
+    return geo
+
+
+def _parse_text_element(text_elem: ET.Element) -> list:
+    """Parse a <Text> element into parts with formatting references."""
+    parts = []
+    current_cp = "0"
+    current_pp = "0"
+
+    # Process text content with inline elements
+    if text_elem.text:
+        parts.append({"text": text_elem.text, "cp": current_cp, "pp": current_pp})
+
+    for child in text_elem:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag == "cp":
+            current_cp = child.get("IX", "0")
+        elif tag == "pp":
+            current_pp = child.get("IX", "0")
+        elif tag == "fld":
+            # Field element — extract text
+            field_text = "".join(child.itertext()).strip()
+            if field_text:
+                parts.append({"text": field_text, "cp": current_cp, "pp": current_pp})
+        if child.tail:
+            parts.append({"text": child.tail, "cp": current_cp, "pp": current_pp})
+
+    return parts
+
+
+# ---------------------------------------------------------------------------
+# Geometry to SVG path conversion
+# ---------------------------------------------------------------------------
+
+def _geometry_to_path(geo: dict, w: float, h: float) -> str:
+    """Convert a parsed Geometry section to an SVG path 'd' attribute.
+
+    Coordinates are in local shape space (inches), will be scaled to px.
+    w, h are shape width/height in inches for relative coordinates.
+    """
+    if geo.get("no_show"):
+        return ""
+
+    d_parts = []
+    cx, cy = 0.0, 0.0  # Current point (inches)
+
+    for row in geo["rows"]:
+        rt = row["type"]
+        cells = row["cells"]
+
+        if rt == "MoveTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            cx, cy = x, y
+
+        elif rt == "RelMoveTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            ax, ay = x * w, y * h
+            d_parts.append(f"M {ax * _INCH_TO_PX:.2f} {(h - ay) * _INCH_TO_PX:.2f}")
+            cx, cy = ax, ay
+
+        elif rt == "LineTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            cx, cy = x, y
+
+        elif rt == "RelLineTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            ax, ay = x * w, y * h
+            d_parts.append(f"L {ax * _INCH_TO_PX:.2f} {(h - ay) * _INCH_TO_PX:.2f}")
+            cx, cy = ax, ay
+
+        elif rt == "ArcTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            a = _safe_float(cells.get("A", {}).get("V"))
+            # A is the bulge/sagitta of the arc
+            _append_arc(d_parts, cx, cy, x, y, a, h)
+            cx, cy = x, y
+
+        elif rt == "EllipticalArcTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            a = _safe_float(cells.get("A", {}).get("V"))  # control point X
+            b = _safe_float(cells.get("B", {}).get("V"))  # control point Y
+            c = _safe_float(cells.get("C", {}).get("V"))  # major/minor ratio
+            d_val = _safe_float(cells.get("D", {}).get("V"))  # angle
+            _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, c, d_val, h)
+            cx, cy = x, y
+
+        elif rt == "NURBSTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            # Approximate NURBS as line for now (proper NURBS requires complex computation)
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            cx, cy = x, y
+
+        elif rt == "RelCurveTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            a = _safe_float(cells.get("A", {}).get("V"))
+            b = _safe_float(cells.get("B", {}).get("V"))
+            c = _safe_float(cells.get("C", {}).get("V"))
+            dd = _safe_float(cells.get("D", {}).get("V"))
+            # Cubic bezier with relative coordinates
+            cp1x, cp1y = a * w, b * h
+            cp2x, cp2y = c * w, dd * h
+            ex, ey = x * w, y * h
+            d_parts.append(
+                f"C {cp1x * _INCH_TO_PX:.2f} {(h - cp1y) * _INCH_TO_PX:.2f} "
+                f"{cp2x * _INCH_TO_PX:.2f} {(h - cp2y) * _INCH_TO_PX:.2f} "
+                f"{ex * _INCH_TO_PX:.2f} {(h - ey) * _INCH_TO_PX:.2f}"
+            )
+            cx, cy = ex, ey
+
+        elif rt == "Ellipse":
+            # Full ellipse: center (X,Y), point on major axis (A,B), point on minor axis (C,D)
+            ex = _safe_float(cells.get("X", {}).get("V"))
+            ey = _safe_float(cells.get("Y", {}).get("V"))
+            ea = _safe_float(cells.get("A", {}).get("V"))
+            eb = _safe_float(cells.get("B", {}).get("V"))
+            ec = _safe_float(cells.get("C", {}).get("V"))
+            ed = _safe_float(cells.get("D", {}).get("V"))
+            rx = math.sqrt((ea - ex) ** 2 + (eb - ey) ** 2)
+            ry = math.sqrt((ec - ex) ** 2 + (ed - ey) ** 2)
+            if rx < 0.001:
+                rx = 0.001
+            if ry < 0.001:
+                ry = 0.001
+            cpx = ex * _INCH_TO_PX
+            cpy = (h - ey) * _INCH_TO_PX
+            rpx = rx * _INCH_TO_PX
+            rpy = ry * _INCH_TO_PX
+            # SVG ellipse as two arcs
+            d_parts.append(
+                f"M {cpx - rpx:.2f} {cpy:.2f} "
+                f"A {rpx:.2f} {rpy:.2f} 0 1 0 {cpx + rpx:.2f} {cpy:.2f} "
+                f"A {rpx:.2f} {rpy:.2f} 0 1 0 {cpx - rpx:.2f} {cpy:.2f} Z"
+            )
+
+        elif rt == "PolylineTo":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            # Try to parse the formula for intermediate points
+            a_cell = cells.get("A", {})
+            formula = a_cell.get("F", "")
+            pts = _parse_polyline_formula(formula, w, h)
+            if pts:
+                for px_val, py_val in pts:
+                    d_parts.append(f"L {px_val * _INCH_TO_PX:.2f} {(h - py_val) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            cx, cy = x, y
+
+        elif rt == "SplineStart":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            cx, cy = x, y
+
+        elif rt == "SplineKnot":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            cx, cy = x, y
+
+        elif rt == "InfiniteLine":
+            x = _safe_float(cells.get("X", {}).get("V"))
+            y = _safe_float(cells.get("Y", {}).get("V"))
+            a = _safe_float(cells.get("A", {}).get("V"))
+            b = _safe_float(cells.get("B", {}).get("V"))
+            d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+            d_parts.append(f"L {a * _INCH_TO_PX:.2f} {(h - b) * _INCH_TO_PX:.2f}")
+            cx, cy = a, b
+
+    return " ".join(d_parts)
+
+
+def _append_arc(d_parts: list, cx: float, cy: float, x: float, y: float,
+                bulge: float, h: float):
+    """Append an arc segment (ArcTo) using SVG arc command.
+
+    bulge (A) is the sagitta — distance from the midpoint of the chord to the arc.
+    If bulge is 0, it's a straight line.
+    """
+    if abs(bulge) < 1e-6:
+        d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+        return
+
+    # Compute arc from chord and sagitta
+    dx = x - cx
+    dy = y - cy
+    chord = math.sqrt(dx * dx + dy * dy)
+    if chord < 1e-10:
+        return
+
+    # Radius from sagitta: r = (chord²/4 + sagitta²) / (2 * |sagitta|)
+    sagitta = abs(bulge)
+    radius = (chord * chord / 4 + sagitta * sagitta) / (2 * sagitta)
+    radius_px = radius * _INCH_TO_PX
+
+    # Determine sweep direction
+    large_arc = 1 if sagitta > chord / 2 else 0
+    sweep = 0 if bulge > 0 else 1
+
+    d_parts.append(
+        f"A {radius_px:.2f} {radius_px:.2f} 0 {large_arc} {sweep} "
+        f"{x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}"
+    )
+
+
+def _append_elliptical_arc(d_parts: list, cx: float, cy: float,
+                           x: float, y: float, a: float, b: float,
+                           c: float, d_val: float, h: float):
+    """Append an elliptical arc segment.
+
+    (a,b) = control point, c = aspect ratio, d_val = rotation angle.
+    For simplicity, approximate with SVG arc.
+    """
+    # Compute approximate radius from control point
+    mid_x = (cx + x) / 2
+    mid_y = (cy + y) / 2
+    dist_to_control = math.sqrt((a - mid_x) ** 2 + (b - mid_y) ** 2)
+    chord = math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+
+    if chord < 1e-10:
+        return
+
+    sagitta = dist_to_control
+    if sagitta < 1e-6:
+        d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}")
+        return
+
+    rx = (chord * chord / 4 + sagitta * sagitta) / (2 * sagitta)
+    ry = rx * c if c > 0 else rx
+    angle_deg = math.degrees(d_val) if d_val else 0
+
+    rx_px = abs(rx * _INCH_TO_PX)
+    ry_px = abs(ry * _INCH_TO_PX)
+    if rx_px < 0.1:
+        rx_px = 0.1
+    if ry_px < 0.1:
+        ry_px = 0.1
+
+    # Determine arc direction from control point position relative to chord
+    cross = (x - cx) * (b - cy) - (y - cy) * (a - cx)
+    sweep = 1 if cross < 0 else 0
+    large_arc = 0
+
+    d_parts.append(
+        f"A {rx_px:.2f} {ry_px:.2f} {angle_deg:.1f} {large_arc} {sweep} "
+        f"{x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}"
+    )
+
+
+def _parse_polyline_formula(formula: str, w: float, h: float) -> list[tuple[float, float]]:
+    """Parse a POLYLINE formula to extract points."""
+    # Format: POLYLINE(0, 0, x1, y1, x2, y2, ...)
+    pts = []
+    m = re.match(r"POLYLINE\s*\((.*)\)", formula, re.IGNORECASE)
+    if not m:
+        return pts
+    try:
+        vals = [float(v.strip()) for v in m.group(1).split(",")]
+        # Skip first two values (flags), then pairs
+        for i in range(2, len(vals) - 1, 2):
+            pts.append((vals[i], vals[i + 1]))
+    except (ValueError, IndexError):
+        pass
+    return pts
+
+
+# ---------------------------------------------------------------------------
+# Shape merging (master inheritance)
+# ---------------------------------------------------------------------------
+
+def _merge_shape_with_master(shape: dict, masters: dict) -> dict:
+    """Merge a shape with its master, local values override master values."""
+    master_id = shape.get("master", "")
+    master_shape_id = shape.get("master_shape", "")
+
+    if not master_id or master_id not in masters:
+        return shape
+
+    master_shapes = masters[master_id]
+
+    # Find the right master shape
+    master_sd = None
+    if master_shape_id and master_shape_id in master_shapes:
+        master_sd = master_shapes[master_shape_id]
+    elif master_shapes:
+        # Use first shape in master
+        master_sd = next(iter(master_shapes.values()))
+
+    if not master_sd:
+        return shape
+
+    # Merge cells: master provides defaults, local overrides
+    merged_cells = dict(master_sd.get("cells", {}))
+    merged_cells.update({k: v for k, v in shape["cells"].items() if v.get("V")})
+    shape["cells"] = merged_cells
+
+    # Merge geometry: use local if present, otherwise master
+    if not shape["geometry"] and master_sd.get("geometry"):
+        shape["geometry"] = master_sd["geometry"]
+
+    # Merge text: use local if present, otherwise master
+    if not shape["text"] and master_sd.get("text"):
+        txt = master_sd["text"]
+        if txt not in ("Label", "Abc"):
+            shape["text"] = txt
+            if not shape["text_parts"] and master_sd.get("text_parts"):
+                shape["text_parts"] = master_sd["text_parts"]
+
+    # Merge character and paragraph formats
+    if not shape["char_formats"] and master_sd.get("char_formats"):
+        shape["char_formats"] = master_sd["char_formats"]
+    if not shape["para_formats"] and master_sd.get("para_formats"):
+        shape["para_formats"] = master_sd["para_formats"]
+
+    return shape
+
+
+# ---------------------------------------------------------------------------
+# Shape to SVG rendering
+# ---------------------------------------------------------------------------
+
+def _get_cell_val(shape: dict, name: str, default: str = "") -> str:
+    """Get a cell value from a shape."""
+    cell = shape.get("cells", {}).get(name, {})
+    return cell.get("V", default)
+
+
+def _get_cell_float(shape: dict, name: str, default: float = 0.0) -> float:
+    """Get a cell value as float."""
+    return _safe_float(_get_cell_val(shape, name), default)
+
+
+def _compute_transform(shape: dict, page_h: float) -> str:
+    """Compute SVG transform for a shape.
+
+    Handles PinX/PinY positioning, LocPinX/LocPinY, rotation, and flipping.
+    Returns SVG transform attribute value.
+    """
+    pin_x = _get_cell_float(shape, "PinX") * _INCH_TO_PX
+    pin_y = (page_h - _get_cell_float(shape, "PinY")) * _INCH_TO_PX
+    loc_pin_x = _get_cell_float(shape, "LocPinX") * _INCH_TO_PX
+    loc_pin_y_raw = _get_cell_float(shape, "LocPinY")
+    w = _get_cell_float(shape, "Width")
+    h = _get_cell_float(shape, "Height")
+    loc_pin_y = (h - loc_pin_y_raw) * _INCH_TO_PX  # Flip Y for local pin
+
+    angle = _get_cell_float(shape, "Angle")
+    flip_x = _get_cell_val(shape, "FlipX") == "1"
+    flip_y = _get_cell_val(shape, "FlipY") == "1"
+
+    parts = []
+
+    # Translate so pin point is at correct page position
+    tx = pin_x - loc_pin_x
+    ty = pin_y - loc_pin_y
+
+    parts.append(f"translate({tx:.2f},{ty:.2f})")
+
+    # Apply rotation around local pin
+    if abs(angle) > 1e-6:
+        angle_deg = -math.degrees(angle)  # Visio angles are CCW, SVG CW
+        parts.append(f"rotate({angle_deg:.2f},{loc_pin_x:.2f},{loc_pin_y:.2f})")
+
+    # Apply flips around local pin
+    if flip_x or flip_y:
+        sx = -1 if flip_x else 1
+        sy = -1 if flip_y else 1
+        # Translate to origin, scale, translate back
+        parts.append(f"translate({loc_pin_x:.2f},{loc_pin_y:.2f})")
+        parts.append(f"scale({sx},{sy})")
+        parts.append(f"translate({-loc_pin_x:.2f},{-loc_pin_y:.2f})")
+
+    return " ".join(parts)
+
+
+def _render_shape_svg(shape: dict, page_h: float, masters: dict) -> list[str]:
+    """Render a single shape as SVG elements. Returns list of SVG strings."""
+    shape = _merge_shape_with_master(shape, masters)
+
+    lines = []
+
+    # Skip shapes marked as hidden
+    # Handle shape type
+    shape_type = shape.get("type", "Shape")
+
+    w_inch = _get_cell_float(shape, "Width")
+    h_inch = _get_cell_float(shape, "Height")
+    w_px = w_inch * _INCH_TO_PX
+    h_px = h_inch * _INCH_TO_PX
+
+    # --- Style ---
+    line_weight = _get_cell_float(shape, "LineWeight", 0.01) * _INCH_TO_PX
+    if line_weight < 0.25:
+        line_weight = 0.75
+    elif line_weight > 20:
+        line_weight = 20
+
+    line_color = _resolve_color(_get_cell_val(shape, "LineColor")) or "#000000"
+    fill_foregnd = _resolve_color(_get_cell_val(shape, "FillForegnd"))
+    fill_pattern = _get_cell_val(shape, "FillPattern", "1")
+    line_pattern = int(_safe_float(_get_cell_val(shape, "LinePattern", "1")))
+    rounding = _get_cell_float(shape, "Rounding") * _INCH_TO_PX
+
+    # Determine fill
+    if fill_pattern == "0":
+        fill = "none"
+    elif fill_foregnd:
+        fill = fill_foregnd
+    else:
+        fill = "#FFFFFF"
+
+    # No line if pattern 0
+    stroke = line_color if line_pattern != 0 else "none"
+    stroke_width = line_weight
+
+    dash_array = _get_dash_array(line_pattern, stroke_width)
+
+    # Build style string
+    style_parts = [
+        f'fill="{fill}"',
+        f'stroke="{stroke}"',
+        f'stroke-width="{stroke_width:.2f}"',
+    ]
+    if dash_array:
+        style_parts.append(f'stroke-dasharray="{dash_array}"')
+
+    style_str = " ".join(style_parts)
+
+    # --- Check for 1D shape (connector/line) ---
+    begin_x = _get_cell_val(shape, "BeginX")
+    begin_y = _get_cell_val(shape, "BeginY")
+    end_x = _get_cell_val(shape, "EndX")
+    end_y = _get_cell_val(shape, "EndY")
+    is_1d = bool(begin_x and end_x)
+
+    # --- Group shapes ---
+    if shape_type == "Group":
+        transform = _compute_transform(shape, page_h)
+        lines.append(f'<g transform="{transform}">')
+        for sub in shape.get("sub_shapes", []):
+            lines.extend(_render_shape_svg(sub, h_inch, masters))
+        lines.append('</g>')
+        # Also render text for the group
+        if shape["text"]:
+            _append_text_svg(lines, shape, page_h, w_px, h_px)
+        return lines
+
+    # --- Compute transform ---
+    transform = _compute_transform(shape, page_h)
+
+    # --- Geometry rendering ---
+    has_geometry = bool(shape["geometry"])
+
+    if has_geometry:
+        for geo in shape["geometry"]:
+            path_d = _geometry_to_path(geo, w_inch, h_inch)
+            if not path_d:
+                continue
+
+            geo_fill = fill
+            geo_stroke = stroke
+            if geo.get("no_fill"):
+                geo_fill = "none"
+            if geo.get("no_line"):
+                geo_stroke = "none"
+
+            geo_style = (
+                f'fill="{geo_fill}" stroke="{geo_stroke}" '
+                f'stroke-width="{stroke_width:.2f}"'
+            )
+            if dash_array:
+                geo_style += f' stroke-dasharray="{dash_array}"'
+
+            lines.append(
+                f'<path d="{path_d}" {geo_style} '
+                f'transform="{transform}"/>'
+            )
+
+    elif is_1d:
+        # 1D shape without geometry — draw a simple line
+        bx = _safe_float(begin_x) * _INCH_TO_PX
+        by = (page_h - _safe_float(begin_y)) * _INCH_TO_PX
+        ex_px = _safe_float(end_x) * _INCH_TO_PX
+        ey_px = (page_h - _safe_float(end_y)) * _INCH_TO_PX
+        lines.append(
+            f'<line x1="{bx:.2f}" y1="{by:.2f}" x2="{ex_px:.2f}" y2="{ey_px:.2f}" '
+            f'stroke="{stroke}" stroke-width="{stroke_width:.2f}"'
+            + (f' stroke-dasharray="{dash_array}"' if dash_array else '')
+            + '/>'
+        )
+
+    else:
+        # No geometry, no 1D — fall back to rectangle
+        if w_px > 0 and h_px > 0:
+            rx_attr = f' rx="{rounding:.2f}"' if rounding > 0 else ""
+            lines.append(
+                f'<rect x="0" y="0" width="{w_px:.2f}" height="{h_px:.2f}" '
+                f'{style_str}{rx_attr} transform="{transform}"/>'
+            )
+
+    # --- Text rendering ---
+    if shape["text"]:
+        _append_text_svg(lines, shape, page_h, w_px, h_px)
+
+    return lines
+
+
+def _append_text_svg(lines: list, shape: dict, page_h: float,
+                     w_px: float, h_px: float):
+    """Append SVG text elements for a shape's text."""
+    text = shape["text"]
+    if not text:
+        return
+
+    # Text position
+    pin_x = _get_cell_float(shape, "PinX") * _INCH_TO_PX
+    pin_y = (page_h - _get_cell_float(shape, "PinY")) * _INCH_TO_PX
+
+    # Text block offset
+    txt_pin_x = _get_cell_float(shape, "TxtPinX")
+    txt_pin_y = _get_cell_float(shape, "TxtPinY")
+    txt_loc_pin_x = _get_cell_float(shape, "TxtLocPinX")
+    txt_loc_pin_y = _get_cell_float(shape, "TxtLocPinY")
+
+    tx = pin_x
+    ty = pin_y
+
+    # Get text formatting
+    char_fmt = shape.get("char_formats", {}).get("0", {})
+    font_size = _safe_float(char_fmt.get("Size"), 0.1111) * _INCH_TO_PX  # ~8pt default
+    if font_size < 6:
+        font_size = 8
+    elif font_size > 72:
+        font_size = 72
+
+    text_color = _resolve_color(char_fmt.get("Color", "")) or "#000000"
+    style_bits = int(_safe_float(char_fmt.get("Style", "0")))
+    is_bold = bool(style_bits & 1)
+    is_italic = bool(style_bits & 2)
+    is_underline = bool(style_bits & 4)
+
+    # Paragraph alignment
+    para_fmt = shape.get("para_formats", {}).get("0", {})
+    halign = int(_safe_float(para_fmt.get("HorzAlign", "1")))
+    anchor_map = {0: "start", 1: "middle", 2: "end"}
+    text_anchor = anchor_map.get(halign, "middle")
+
+    # Font weight/style
+    fw = ' font-weight="bold"' if is_bold else ""
+    fs = ' font-style="italic"' if is_italic else ""
+    td = ' text-decoration="underline"' if is_underline else ""
+
+    # Split text into lines
+    text_lines = text.split("\n")
+
+    if len(text_lines) == 1:
+        escaped = _escape_xml(text)
+        lines.append(
+            f'<text x="{tx:.2f}" y="{ty:.2f}" '
+            f'text-anchor="{text_anchor}" dominant-baseline="central" '
+            f'font-family="sans-serif" font-size="{font_size:.1f}" '
+            f'fill="{text_color}"{fw}{fs}{td}>'
+            f'{escaped}</text>'
+        )
+    else:
+        # Multi-line text
+        total_height = len(text_lines) * font_size * 1.2
+        start_y = ty - total_height / 2 + font_size * 0.6
+        for j, tline in enumerate(text_lines):
+            if not tline.strip():
+                continue
+            escaped = _escape_xml(tline)
+            ly = start_y + j * font_size * 1.2
+            lines.append(
+                f'<text x="{tx:.2f}" y="{ly:.2f}" '
+                f'text-anchor="{text_anchor}" '
+                f'font-family="sans-serif" font-size="{font_size:.1f}" '
+                f'fill="{text_color}"{fw}{fs}{td}>'
+                f'{escaped}</text>'
+            )
+
+
+# ---------------------------------------------------------------------------
+# Page dimension parsing
+# ---------------------------------------------------------------------------
+
+def _parse_page_dimensions(page_xml: bytes) -> tuple[float, float]:
+    """Extract page width and height from a page XML.
+
+    Returns (width_inches, height_inches).
+    """
+    try:
+        root = ET.fromstring(page_xml)
+    except ET.ParseError:
+        return (8.5, 11.0)
+
+    page_w = 8.5
+    page_h = 11.0
+
+    # Look for PageSheet
+    page_sheet = root.find(f"{_VTAG}PageSheet")
+    if page_sheet is not None:
+        for cell in page_sheet.findall(f"{_VTAG}Cell"):
+            n = cell.get("N", "")
+            v = cell.get("V", "")
+            if n == "PageWidth":
+                page_w = _safe_float(v, 8.5)
+            elif n == "PageHeight":
+                page_h = _safe_float(v, 11.0)
+
+    return page_w, page_h
+
+
+# ---------------------------------------------------------------------------
+# Main parser and SVG generation
+# ---------------------------------------------------------------------------
+
+def _parse_vsdx_shapes(page_xml: bytes, master_texts: dict | None = None,
+                       masters: dict | None = None) -> list[dict]:
+    """Parse shapes from a Visio page XML into rich shape dicts.
+
+    Args:
+        page_xml: Raw XML bytes of a page file.
+        master_texts: Legacy param (ignored, kept for API compat).
+        masters: Full master shapes dict from _parse_master_shapes.
+    """
+    shapes = []
+    try:
+        root = ET.fromstring(page_xml)
+    except ET.ParseError:
+        return shapes
+
+    # Find all top-level shapes (direct children of Shapes element)
+    shapes_container = root.find(f"{_VTAG}Shapes")
+    if shapes_container is None:
+        return shapes
+
+    for shape_elem in shapes_container.findall(f"{_VTAG}Shape"):
+        sd = _parse_single_shape(shape_elem)
+        shapes.append(sd)
+
+    return shapes
+
+
+def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
+                   masters: dict | None = None) -> str:
+    """Generate SVG string from parsed shapes."""
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
+    ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
+
+    page_w_px = page_w * _INCH_TO_PX
+    page_h_px = page_h * _INCH_TO_PX
+
+    svg_lines = [
+        f'<?xml version="1.0" encoding="UTF-8"?>',
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'xmlns:xlink="http://www.w3.org/1999/xlink" '
+        f'width="{page_w_px:.0f}" height="{page_h_px:.0f}" '
+        f'viewBox="0 0 {page_w_px:.0f} {page_h_px:.0f}">',
+        f'<rect width="100%" height="100%" fill="white"/>',
+    ]
+
+    if masters is None:
+        masters = {}
+
+    for s in shapes:
+        svg_elements = _render_shape_svg(s, page_h, masters)
+        svg_lines.extend(svg_elements)
+
+    svg_lines.append("</svg>")
+    return "\n".join(svg_lines)
+
+
+# ---------------------------------------------------------------------------
+# Legacy API compatibility
+# ---------------------------------------------------------------------------
+
+def _parse_master_texts(zf: zipfile.ZipFile) -> dict[str, dict[str, str]]:
+    """Parse text from master shapes. Returns {master_id: {shape_id: text}}.
+
+    Kept for API compatibility. Internally we use _parse_master_shapes now.
+    """
+    masters = {}
+    for name in zf.namelist():
+        if name.startswith("visio/masters/master") and name.endswith(".xml") and "masters.xml" not in name:
+            master_num = Path(name).stem.replace("master", "")
+            try:
+                root = ET.fromstring(zf.read(name))
+            except (ET.ParseError, KeyError):
+                continue
+            shape_texts = {}
+            for shape in root.iter(f"{_VTAG}Shape"):
+                shape_id = shape.get("ID", "")
+                text_elem = shape.find(f"{_VTAG}Text")
+                if text_elem is not None:
+                    text = "".join(text_elem.itertext()).strip()
+                    if text:
+                        shape_texts[shape_id] = text
+            if shape_texts:
+                masters[master_num] = shape_texts
+    return masters
+
+
+# ---------------------------------------------------------------------------
+# Public API functions
+# ---------------------------------------------------------------------------
 
 def find_vsd2xhtml() -> str | None:
     """Find vsd2xhtml from libvisio."""
@@ -76,15 +1068,12 @@ def _convert_with_libvisio(input_path: str, output_dir: str, page: int | None = 
     if result.returncode != 0:
         return []
 
-    # vsd2xhtml outputs XHTML with embedded SVG to stdout
     xhtml_content = result.stdout
     if not xhtml_content.strip():
         return []
 
-    # Extract SVG elements from XHTML
     svg_files = []
     try:
-        # Register SVG namespace as default to avoid ns0: prefixes in output
         ET.register_namespace("", "http://www.w3.org/2000/svg")
         ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
 
@@ -109,90 +1098,13 @@ def _convert_with_libvisio(input_path: str, output_dir: str, page: int | None = 
     return svg_files
 
 
-def _parse_master_texts(zf: zipfile.ZipFile) -> dict[str, dict[str, str]]:
-    """Parse text from master shapes. Returns {master_id: {shape_id: text}}."""
-    masters = {}
-    for name in zf.namelist():
-        if name.startswith("visio/masters/master") and name.endswith(".xml") and "masters.xml" not in name:
-            # Extract master ID from filename (e.g., master2.xml -> "2")
-            master_num = Path(name).stem.replace("master", "")
-            try:
-                root = ET.fromstring(zf.read(name))
-            except (ET.ParseError, KeyError):
-                continue
-            shape_texts = {}
-            for shape in root.iter(f"{{{_NS['v']}}}Shape"):
-                shape_id = shape.get("ID", "")
-                text_elem = shape.find(f"{{{_NS['v']}}}Text")
-                if text_elem is not None:
-                    text = "".join(text_elem.itertext()).strip()
-                    if text:
-                        shape_texts[shape_id] = text
-            if shape_texts:
-                masters[master_num] = shape_texts
-    return masters
-
-
-def _parse_vsdx_shapes(page_xml: bytes, master_texts: dict | None = None) -> list[dict]:
-    """Parse shapes from a Visio page XML.
-
-    Args:
-        page_xml: Raw XML bytes of a page file.
-        master_texts: Optional dict from _parse_master_texts for text inheritance.
-    """
-    shapes = []
-    try:
-        root = ET.fromstring(page_xml)
-    except ET.ParseError:
-        return shapes
-
-    for shape in root.iter(f"{{{_NS['v']}}}Shape"):
-        s = {"type": "shape", "x": 0, "y": 0, "w": 72, "h": 36, "text": ""}
-
-        master_id = shape.get("Master", "")
-
-        for cell in shape.findall(f"{{{_NS['v']}}}Cell"):
-            name = cell.get("N", "")
-            val = cell.get("V", "0")
-            try:
-                fval = float(val)
-            except (ValueError, TypeError):
-                fval = 0
-
-            if name == "PinX":
-                s["x"] = fval * 72
-            elif name == "PinY":
-                s["y"] = fval * 72
-            elif name == "Width":
-                s["w"] = fval * 72
-            elif name == "Height":
-                s["h"] = fval * 72
-
-        text_elem = shape.find(f"{{{_NS['v']}}}Text")
-        if text_elem is not None:
-            s["text"] = "".join(text_elem.itertext()).strip()
-
-        # Inherit text from master if shape has no own text
-        if not s["text"] and master_id and master_texts:
-            master_shape_texts = master_texts.get(master_id, {})
-            # Use the first non-placeholder text from the master
-            for _sid, mtext in master_shape_texts.items():
-                if mtext and mtext not in ("Label", "Abc"):
-                    s["text"] = mtext
-                    break
-
-        shapes.append(s)
-
-    return shapes
-
-
 def _parse_vsdx_page_names(zf: zipfile.ZipFile) -> list[str]:
     """Parse page names from pages.xml inside a .vsdx/.vssx ZIP."""
     names = []
     try:
         pages_xml = zf.read("visio/pages/pages.xml")
         root = ET.fromstring(pages_xml)
-        for page in root.findall(f"{{{_NS['v']}}}Page"):
+        for page in root.findall(f"{_VTAG}Page"):
             name = page.get("Name", "")
             names.append(name)
     except (KeyError, ET.ParseError):
@@ -217,48 +1129,6 @@ def _get_page_files(zf: zipfile.ZipFile) -> list[str]:
     return page_files
 
 
-def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float) -> str:
-    """Generate SVG string from parsed shapes."""
-    svg_lines = [
-        f'<?xml version="1.0" encoding="UTF-8"?>',
-        f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{page_w:.0f}" height="{page_h:.0f}" '
-        f'viewBox="0 0 {page_w:.0f} {page_h:.0f}">',
-        f'<rect width="100%" height="100%" fill="white"/>',
-    ]
-
-    for s in shapes:
-        sx = s["x"] - s["w"] / 2
-        sy = page_h - s["y"] - s["h"] / 2
-        sw = s["w"]
-        sh = s["h"]
-
-        svg_lines.append(
-            f'<rect x="{sx:.1f}" y="{sy:.1f}" '
-            f'width="{sw:.1f}" height="{sh:.1f}" '
-            f'fill="#e8f0fe" stroke="#4285f4" stroke-width="1.5" rx="4"/>'
-        )
-
-        if s["text"]:
-            tx = s["x"]
-            ty = page_h - s["y"]
-            text_escaped = (
-                s["text"]
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-            )
-            svg_lines.append(
-                f'<text x="{tx:.1f}" y="{ty:.1f}" '
-                f'text-anchor="middle" dominant-baseline="central" '
-                f'font-family="sans-serif" font-size="11" fill="#333">'
-                f'{text_escaped}</text>'
-            )
-
-    svg_lines.append("</svg>")
-    return "\n".join(svg_lines)
-
-
 def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
     """Parse .vsdx (ZIP+XML) and generate SVG directly."""
     if not zipfile.is_zipfile(input_path):
@@ -268,7 +1138,7 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
     svg_files = []
 
     with zipfile.ZipFile(input_path, "r") as zf:
-        master_texts = _parse_master_texts(zf)
+        masters = _parse_master_shapes(zf)
         page_files = _get_page_files(zf)
 
         for i, page_file in enumerate(page_files):
@@ -277,16 +1147,13 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
             except (KeyError, zipfile.BadZipFile):
                 continue
 
-            shapes = _parse_vsdx_shapes(page_xml, master_texts)
+            page_w, page_h = _parse_page_dimensions(page_xml)
+            shapes = _parse_vsdx_shapes(page_xml, masters=masters)
+
             if not shapes:
                 continue
 
-            max_x = max((s["x"] + s["w"] / 2) for s in shapes) if shapes else 800
-            max_y = max((s["y"] + s["h"] / 2) for s in shapes) if shapes else 600
-            page_w = max(max_x + 50, 400)
-            page_h = max(max_y + 50, 300)
-
-            svg_content = _shapes_to_svg(shapes, page_w, page_h)
+            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters)
             svg_path = os.path.join(output_dir, f"{basename}_page{i + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
@@ -308,7 +1175,7 @@ def get_page_info(input_path: str) -> list[dict]:
             return pages
 
         with zipfile.ZipFile(input_path, "r") as zf:
-            master_texts = _parse_master_texts(zf)
+            masters = _parse_master_shapes(zf)
             page_names = _parse_vsdx_page_names(zf)
             page_files = _get_page_files(zf)
 
@@ -318,7 +1185,7 @@ def get_page_info(input_path: str) -> list[dict]:
                 except (KeyError, zipfile.BadZipFile):
                     continue
 
-                shapes = _parse_vsdx_shapes(page_xml, master_texts)
+                shapes = _parse_vsdx_shapes(page_xml, masters=masters)
                 name = page_names[i] if i < len(page_names) else f"Page {i + 1}"
                 pages.append({"name": name, "shapes": shapes, "index": i})
 
@@ -331,16 +1198,15 @@ def extract_all_text(input_path: str) -> str:
 
     if ext in (".vsdx", ".vssx", ".vssm"):
         pages = get_page_info(input_path)
-        lines = []
+        text_lines = []
         for page in pages:
-            lines.append(f"--- {page['name']} ---")
+            text_lines.append(f"--- {page['name']} ---")
             for shape in page["shapes"]:
                 if shape.get("text"):
-                    lines.append(shape["text"])
-            lines.append("")
-        return "\n".join(lines)
+                    text_lines.append(shape["text"])
+            text_lines.append("")
+        return "\n".join(text_lines)
 
-    # For .vsd, try vsd2xhtml text extraction
     if ext in (".vsd", ".vss"):
         tool = find_vsd2xhtml()
         if tool:
@@ -350,7 +1216,6 @@ def extract_all_text(input_path: str) -> str:
                     capture_output=True, text=True, timeout=60,
                 )
                 if result.returncode == 0:
-                    # Extract text from XHTML
                     try:
                         root = ET.fromstring(result.stdout)
                         texts = []
@@ -383,12 +1248,10 @@ def convert_vsd_to_svg(input_path: str, output_dir: str | None = None) -> list[s
     if ext not in ALL_EXTENSIONS:
         raise RuntimeError(_("Unsupported file format: %s") % ext)
 
-    # Try libvisio first (handles both .vsd and .vsdx)
     svg_files = _convert_with_libvisio(input_path, output_dir)
     if svg_files:
         return svg_files
 
-    # Fall back to built-in .vsdx/.vssx parser
     if ext in (".vsdx", ".vssx", ".vssm"):
         svg_files = _vsdx_to_svg(input_path, output_dir)
         if svg_files:
@@ -414,32 +1277,26 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
     ext = Path(input_path).suffix.lower()
     basename = Path(input_path).stem
 
-    # Try libvisio with --page
     if ext in (".vsd", ".vss"):
         svg_files = _convert_with_libvisio(input_path, output_dir, page=page_index + 1)
         if svg_files:
             return svg_files[0]
         return None
 
-    # Built-in parser for .vsdx/.vssx
     if ext in (".vsdx", ".vssx", ".vssm") and zipfile.is_zipfile(input_path):
         with zipfile.ZipFile(input_path, "r") as zf:
-            master_texts = _parse_master_texts(zf)
+            masters = _parse_master_shapes(zf)
             page_files = _get_page_files(zf)
             if page_index >= len(page_files):
                 return None
 
             page_xml = zf.read(page_files[page_index])
-            shapes = _parse_vsdx_shapes(page_xml, master_texts)
+            page_w, page_h = _parse_page_dimensions(page_xml)
+            shapes = _parse_vsdx_shapes(page_xml, masters=masters)
             if not shapes:
                 return None
 
-            max_x = max((s["x"] + s["w"] / 2) for s in shapes)
-            max_y = max((s["y"] + s["h"] / 2) for s in shapes)
-            page_w = max(max_x + 50, 400)
-            page_h = max(max_y + 50, 300)
-
-            svg_content = _shapes_to_svg(shapes, page_w, page_h)
+            svg_content = _shapes_to_svg(shapes, page_w, page_h, masters)
             svg_path = os.path.join(output_dir, f"{basename}_page{page_index + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_content)
