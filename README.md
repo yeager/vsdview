@@ -36,7 +36,7 @@ sudo apt install vsdview
 ### Fedora/RPM
 
 ```bash
-sudo dnf install vsdview-0.2.1-1.noarch.rpm
+sudo dnf install vsdview-0.2.2-1.noarch.rpm
 ```
 
 ### From source
