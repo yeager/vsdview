@@ -39,7 +39,7 @@ jobs:
           PKG=$(mktemp -d)
           mkdir -p $PKG/usr/lib/python3/dist-packages/vsdview
           mkdir -p $PKG/usr/bin
-          mkdir -p $PKG/usr/share/man/man1
+          mkdir -p $PKG/usr/share/applications
           mkdir -p $PKG/DEBIAN
 
           cp vsdview/*.py $PKG/usr/lib/python3/dist-packages/vsdview/
@@ -51,8 +51,10 @@ jobs:
             cp "$mo" $PKG/usr/share/locale/$lang/LC_MESSAGES/
           done
 
-          cp man/vsdview.1 $PKG/usr/share/man/man1/
-          gzip -9 $PKG/usr/share/man/man1/vsdview.1
+          # Desktop file
+          if [ -f data/vsdview.desktop ]; then
+            cp data/vsdview.desktop $PKG/usr/share/applications/
+          fi
 
           printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > $PKG/usr/bin/vsdview
           chmod +x $PKG/usr/bin/vsdview
@@ -63,13 +65,14 @@ jobs:
           Section: graphics
           Priority: optional
           Architecture: all
-          Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-rsvg-2.0, libreoffice-draw
-          Recommends: librsvg2-bin
+          Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-rsvg-2.0
+          Recommends: libvisio-tools
           Maintainer: Daniel Nylander <daniel@danielnylander.se>
           Homepage: https://github.com/yeager/vsdview
           Description: Read-only viewer for Microsoft Visio files
            VSDView is a minimal viewer for .vsdx and .vsd files, built with
-           GTK4 and libadwaita. Uses LibreOffice for headless conversion.
+           GTK4 and libadwaita. Uses a built-in .vsdx parser with optional
+           libvisio support for legacy .vsd files.
           EOF
           sed -i 's/^          //' $PKG/DEBIAN/control
 

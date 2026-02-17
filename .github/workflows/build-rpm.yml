@@ -53,26 +53,23 @@ jobs:
               Requires:       gtk4
               Requires:       libadwaita
               Requires:       librsvg2
-              Requires:       libreoffice-draw
+              Recommends:     libvisio-tools
 
               %description
               VSDView is a minimal read-only viewer for Microsoft Visio files
-              (.vsdx and .vsd), built with GTK4 and libadwaita.
+              (.vsdx and .vsd), built with GTK4 and libadwaita. Uses a built-in
+              .vsdx parser with optional libvisio support for legacy .vsd files.
 
               %install
               mkdir -p %{{buildroot}}/usr/lib/python3/dist-packages/vsdview
               mkdir -p %{{buildroot}}/usr/bin
-              mkdir -p %{{buildroot}}/usr/share/man/man1
               cp vsdview/*.py %{{buildroot}}/usr/lib/python3/dist-packages/vsdview/
               printf '#!/usr/bin/env python3\\nfrom vsdview.__main__ import main\\nmain()\\n' > %{{buildroot}}/usr/bin/vsdview
               chmod +x %{{buildroot}}/usr/bin/vsdview
-              cp man/vsdview.1 %{{buildroot}}/usr/share/man/man1/
-              gzip -9 %{{buildroot}}/usr/share/man/man1/vsdview.1
 
               %files
               /usr/lib/python3/dist-packages/vsdview/
               /usr/bin/vsdview
-              /usr/share/man/man1/vsdview.1.gz
           ''').lstrip()
           with open('vsdview.spec', 'w') as f:
               f.write(spec)

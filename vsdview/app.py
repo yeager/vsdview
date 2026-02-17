@@ -4,7 +4,6 @@ import gettext
 import locale
 import os
 import platform
-import shutil
 import subprocess
 import sys
 
@@ -186,15 +185,13 @@ class VSDViewApplication(Adw.Application):
     def _build_debug_info(self):
         from vsdview.converter import find_vsd2xhtml
         vsd2xhtml = find_vsd2xhtml() or _("not found")
-        lo_path = shutil.which("libreoffice") or shutil.which("lowriter") or _("not found")
         lines = [
             f"VSDView {__version__}",
             f"Python {sys.version}",
             f"GTK {Gtk.get_major_version()}.{Gtk.get_minor_version()}.{Gtk.get_micro_version()}",
             f"Adwaita {Adw.get_major_version()}.{Adw.get_minor_version()}.{Adw.get_micro_version()}",
             f"OS: {platform.system()} {platform.release()}",
-            f"vsd2xhtml: {vsd2xhtml}",
-            f"LibreOffice: {lo_path}",
+            f"vsd2xhtml (libvisio): {vsd2xhtml}",
         ]
         return "\n".join(lines)
 
