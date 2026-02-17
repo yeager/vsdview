@@ -12,7 +12,7 @@ gi.require_version("Rsvg", "2.0")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Rsvg
 
-from vsdview.converter import convert_vsd_to_svg, export_to_png, find_libreoffice
+from vsdview.converter import convert_vsd_to_svg, export_to_png
 
 _ = gettext.gettext
 
@@ -139,16 +139,7 @@ class VSDViewWindow(Adw.ApplicationWindow):
             pass
 
     def open_file(self, path):
-        """Convert a Visio file to SVG via LibreOffice and display it."""
-        if not find_libreoffice():
-            self._send_notification(
-                _("LibreOffice not found"),
-                _("Install LibreOffice to open Visio files."),
-            )
-            self._show_error(
-                _("LibreOffice is required but was not found on your system.")
-            )
-            return
+        """Convert a Visio file to SVG and display it."""
 
         tmpdir = tempfile.mkdtemp(prefix="vsdview_")
         try:
