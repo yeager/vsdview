@@ -2059,9 +2059,12 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     fs = ' font-style="italic"' if is_italic else ""
     td = ' text-decoration="underline"' if is_underline else ""
 
-    # Text width for wrapping
+    # Text width for wrapping - prefer TxtWidth over shape Width
     txt_width = _get_cell_float(shape, "TxtWidth")
     txt_width_px = txt_width * _INCH_TO_PX if txt_width > 0 else w_px
+    # For very small shapes, use the larger of TxtWidth and shape Width
+    if txt_width_px < 40 and w_px > txt_width_px:
+        txt_width_px = w_px
 
     # clipPath for text clipping to shape bounds (prevents overlap)
     clip_attr = ""
@@ -2123,6 +2126,10 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     if bullet > 0:
         bullet_char = "• " if bullet == 1 else "‣ " if bullet == 2 else "– "
         text_lines = [bullet_char + tl if tl.strip() else tl for tl in text_lines]
+
+    # Handle zero-height shapes (text-only labels in Visio)
+    if h_px <= 0:
+        h_px = len(text_lines) * font_size * 1.4  # Estimate height from text
 
     # Auto-reduce font size for small shapes with long text
     if txt_width_px > 0 and font_size > 0 and not is_container:
@@ -2273,11 +2280,12 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 f'width="{est_w + 4:.2f}" height="{font_size * 1.2:.2f}" '
                 f'fill="white" fill-opacity="0.85" rx="2"/>'
             )
+        _noclip = '' if _is_1d_shape else ' data-noclip="1"'
         lines.append(
             f'<text x="{tx:.2f}" y="{ty:.2f}" '
             f'text-anchor="{text_anchor}" dominant-baseline="central" '
             f'font-family="{font_family}" font-size="{font_size:.1f}" '
-            f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}{clip_attr}>'
+            f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}{clip_attr}{_noclip}>'
             f'{escaped}</text>'
         )
     else:
@@ -2300,11 +2308,12 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 continue
             escaped = _escape_xml(tline)
             ly = start_y + j * font_size * 1.2
+            _noclip = '' if _is_1d_shape else ' data-noclip="1"'
             lines.append(
                 f'<text x="{tx:.2f}" y="{ly:.2f}" '
                 f'text-anchor="{text_anchor}" '
                 f'font-family="{font_family}" font-size="{font_size:.1f}" '
-                f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}{clip_attr}>'
+                f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}{clip_attr}{_noclip}>'
                 f'{escaped}</text>'
             )
 
@@ -2619,6 +2628,11 @@ def _avoid_text_collisions(text_elements: list[str]) -> list[str]:
     for elem in text_elements:
         m = _text_re.search(elem)
         if not m:
+            result.append(elem)
+            continue
+
+        # Skip shape-body text (collision avoidance would move it out of its shape)
+        if 'data-noclip="1"' in elem:
             result.append(elem)
             continue
 
