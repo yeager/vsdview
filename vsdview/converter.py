@@ -2280,7 +2280,10 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 f'width="{est_w + 4:.2f}" height="{font_size * 1.2:.2f}" '
                 f'fill="white" fill-opacity="0.85" rx="2"/>'
             )
-        _noclip = '' if _is_1d_shape else ' data-noclip="1"'
+        # Only mark as noclip if shape has visible geometry (text is inside a shape)
+        # Standalone text labels should still be subject to collision avoidance
+        _has_visible_body = bool(shape.get("geometry")) and w_px > 10 and h_px > 10
+        _noclip = ' data-noclip="1"' if (_has_visible_body and not _is_1d_shape) else ''
         lines.append(
             f'<text x="{tx:.2f}" y="{ty:.2f}" '
             f'text-anchor="{text_anchor}" dominant-baseline="central" '
@@ -2308,7 +2311,8 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 continue
             escaped = _escape_xml(tline)
             ly = start_y + j * font_size * 1.2
-            _noclip = '' if _is_1d_shape else ' data-noclip="1"'
+            _has_visible_body = bool(shape.get("geometry")) and w_px > 10 and h_px > 10
+            _noclip = ' data-noclip="1"' if (_has_visible_body and not _is_1d_shape) else ''
             lines.append(
                 f'<text x="{tx:.2f}" y="{ly:.2f}" '
                 f'text-anchor="{text_anchor}" '
@@ -2705,11 +2709,11 @@ def _avoid_text_collisions(text_elements: list[str]) -> list[str]:
         elif text_fill in ("WHITE", "#FFF", "#FFFFFF"):
             _is_light_text = True
 
-        if not _is_light_text:
+        if not _is_light_text and fs >= 7.5:
             result.append(
                 f'<rect x="{box_x:.2f}" y="{box_y:.2f}" '
                 f'width="{est_w + 4:.2f}" height="{est_h:.2f}" '
-                f'fill="white" fill-opacity="0.82" rx="2"/>'
+                f'fill="white" fill-opacity="0.75" rx="2"/>'
             )
         result.append(updated_elem)
 
