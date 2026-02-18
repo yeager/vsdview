@@ -2080,8 +2080,12 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
         tx = shape_left + txt_pin_x * _INCH_TO_PX
         ty = shape_top + (abs(h_inch) - txt_pin_y) * _INCH_TO_PX
     else:
-        tx = pin_x
-        ty = pin_y
+        # Default to shape center — use pin position offset by half width
+        # For shapes where PinX=0, center text at Width/2
+        shape_left = pin_x - loc_pin_x
+        shape_top = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
+        tx = shape_left + abs(w_inch) * _INCH_TO_PX * 0.5
+        ty = shape_top + abs(h_inch) * _INCH_TO_PX * 0.5
 
     # Get text formatting — support multi-format text via text_parts
     char_formats = shape.get("char_formats", {})
