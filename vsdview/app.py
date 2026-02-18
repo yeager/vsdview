@@ -211,12 +211,13 @@ class VSDViewApplication(Adw.Application):
             version=__version__,
             developer_name="Daniel Nylander",
             license_type=Gtk.License.GPL_3_0,
-            developers=["Daniel Nylander"],
+            developers=["Daniel Nylander <daniel@danielnylander.se>"],
             copyright="© 2026 Daniel Nylander",
             debug_info=debug_info,
             debug_info_filename="vsdview-debug-info.txt",
             website="https://github.com/yeager/vsdview",
             issue_url="https://github.com/yeager/vsdview/issues",
+            translator_credits=_("Translate this app: https://www.transifex.com/danielnylander/vsdview/"),
             comments=_("Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView is not affiliated with or endorsed by Microsoft."),
         )
         about.add_legal_section("GTK", "The GTK Team", Gtk.License.LGPL_2_1)
