@@ -962,6 +962,17 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, d_ratio, c_angle, abs_h)
             cx, cy = x, y
 
+        elif rt == "RelEllipticalArcTo":
+            # Same as EllipticalArcTo but with relative coordinates (0-1)
+            x = _safe_float(cells.get("X", {}).get("V")) * abs_w
+            y = _safe_float(cells.get("Y", {}).get("V")) * abs_h
+            a = _safe_float(cells.get("A", {}).get("V")) * abs_w  # control point X
+            b = _safe_float(cells.get("B", {}).get("V")) * abs_h  # control point Y
+            c_angle = _safe_float(cells.get("C", {}).get("V"))  # angle (radians)
+            d_ratio = _safe_float(cells.get("D", {}).get("V"))  # ratio major/minor
+            _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, d_ratio, c_angle, abs_h)
+            cx, cy = x, y
+
         elif rt == "NURBSTo":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
@@ -988,7 +999,7 @@ def _geometry_to_path(geo: dict, w: float, h: float,
                 d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
-        elif rt == "RelCurveTo":
+        elif rt in ("RelCurveTo", "RelCubBezTo"):
             x = _safe_float(cells.get("X", {}).get("V"))
             y = _safe_float(cells.get("Y", {}).get("V"))
             a = _safe_float(cells.get("A", {}).get("V"))
