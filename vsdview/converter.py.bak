@@ -87,7 +87,7 @@ _LINE_PATTERNS = {
 _INCH_TO_PX = 72.0
 
 # Arrow size lookup (BeginArrowSize/EndArrowSize 0-6 -> scale factor)
-_ARROW_SIZES = {0: 0.6, 1: 0.8, 2: 1.0, 3: 1.2, 4: 1.6, 5: 2.0, 6: 2.5}
+_ARROW_SIZES = {0: 0.5, 1: 0.65, 2: 0.8, 3: 1.0, 4: 1.5, 5: 2.0, 6: 2.5}
 
 # MIME types for embedded images
 _IMAGE_MIMETYPES = {
@@ -561,7 +561,7 @@ def _arrow_marker_defs(used_markers: set[str]) -> list[str]:
             lines.append(
                 f'<marker id="{marker_id}" markerWidth="{marker_w:.1f}" '
                 f'markerHeight="{marker_h:.1f}" refX="0" refY="{marker_h/2:.1f}" '
-                f'orient="auto" markerUnits="userSpaceOnUse">'
+                f'orient="auto" markerUnits="strokeWidth">'
                 f'<polygon points="{marker_w:.1f} 0, 0 {marker_h/2:.1f}, '
                 f'{marker_w:.1f} {marker_h:.1f}" fill="{color}"/>'
                 f'</marker>'
@@ -571,7 +571,7 @@ def _arrow_marker_defs(used_markers: set[str]) -> list[str]:
             lines.append(
                 f'<marker id="{marker_id}" markerWidth="{marker_w:.1f}" '
                 f'markerHeight="{marker_h:.1f}" refX="{marker_w:.1f}" '
-                f'refY="{marker_h/2:.1f}" orient="auto" markerUnits="userSpaceOnUse">'
+                f'refY="{marker_h/2:.1f}" orient="auto" markerUnits="strokeWidth">'
                 f'<polygon points="0 0, {marker_w:.1f} {marker_h/2:.1f}, '
                 f'0 {marker_h:.1f}" fill="{color}"/>'
                 f'</marker>'
@@ -789,7 +789,6 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
     if text_elem is not None:
         sd["text"] = "".join(text_elem.itertext()).strip()
         sd["text_parts"] = _parse_text_element(text_elem)
-        sd["_has_text_elem"] = True  # Mark that Text element exists (even if empty)
 
     # Parse sub-shapes (for groups)
     shapes_container = shape_elem.find(f"{_VTAG}Shapes")
@@ -1316,7 +1315,7 @@ def _merge_shape_with_master(shape: dict, masters: dict,
                     local_geo["rows"] = merged_rows
 
     # Merge text: use local if present, otherwise master
-    if not shape["text"] and not shape.get("_has_text_elem") and master_sd.get("text") and shape.get("type") != "Group":
+    if not shape["text"] and master_sd.get("text"):
         txt = master_sd["text"]
         if txt not in ("Label", "Abc"):
             shape["text"] = txt
@@ -1922,12 +1921,12 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 f'{fallback_style}{rx_attr} transform="{transform}"/>'
             )
             # If shape has no text but has a name, show name as label
-            if not shape.get("text") and not shape.get("_has_text_elem"):
+            if not shape.get("text"):
                 shape_label = shape.get("name_u", "") or shape.get("name", "")
                 if shape_label and not shape_label.startswith("Sheet."):
                     # Clean up generic names
                     shape_label = shape_label.split(".")[-1] if "." in shape_label else shape_label
-                    if shape_label and len(shape_label) < 30 and not shape_label.isdigit():
+                    if shape_label and len(shape_label) < 30:
                         shape["text"] = shape_label
 
     # --- Embedded image rendering ---
