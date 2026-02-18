@@ -2011,7 +2011,7 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 has_multi_format = True; break
             if cc and base_color and cc != base_color:
                 has_multi_format = True; break
-            if cs != base_style:
+            if cs != base_style and cs != "Themed" and base_style != "Themed":
                 has_multi_format = True; break
             if csz and base_size and csz != base_size:
                 has_multi_format = True; break
