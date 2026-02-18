@@ -2800,14 +2800,60 @@ def _resolve_connection_point(shape: dict, cell_ref: str, page_h: float,
     return None
 
 
+def _clip_line_to_rect(x1, y1, x2, y2, cx, cy, hw, hh):
+    """Clip a line endpoint (x2,y2) to the edge of a rectangle centered at (cx,cy).
+    
+    hw, hh = half-width, half-height.
+    Returns the clipped (x2, y2) on the rectangle edge.
+    """
+    dx = x2 - cx
+    dy = y2 - cy
+    if abs(dx) < 0.01 and abs(dy) < 0.01:
+        return x2, y2
+    # Direction from center to the other point
+    ddx = x1 - cx
+    ddy = y1 - cy
+    if abs(ddx) < 0.01 and abs(ddy) < 0.01:
+        return x2, y2
+    # Find intersection with rectangle edges
+    t_vals = []
+    if abs(ddx) > 0.01:
+        t_vals.append(hw / abs(ddx))
+        t_vals.append(-hw / abs(ddx))
+    if abs(ddy) > 0.01:
+        t_vals.append(hh / abs(ddy))
+        t_vals.append(-hh / abs(ddy))
+    t = float('inf')
+    for tv in t_vals:
+        if tv > 0:
+            px = cx + ddx * tv
+            py = cy + ddy * tv
+            if abs(px - cx) <= hw + 0.5 and abs(py - cy) <= hh + 0.5:
+                t = min(t, tv)
+    if t < float('inf'):
+        return cx + ddx * t, cy + ddy * t
+    return x2, y2
+
+
 def _render_connections_svg(connects: list[dict], shape_index: dict,
                             page_h: float, masters: dict) -> list[str]:
     """Render connection lines as SVG elements."""
     lines = []
+    # Track which connector shapes (1D) already render their own lines
+    connector_sheets = set()
+    for conn in connects:
+        from_cell = conn.get("from_cell", "")
+        if from_cell in ("BeginX", "EndX"):
+            connector_sheets.add(conn["from_sheet"])
+
     for conn in connects:
         from_shape = shape_index.get(conn["from_sheet"])
         to_shape = shape_index.get(conn["to_sheet"])
         if not from_shape or not to_shape:
+            continue
+
+        # Skip if the from_sheet is a 1D connector (already rendered)
+        if conn["from_sheet"] in connector_sheets:
             continue
 
         # Merge with masters for connections/controls data
@@ -2822,14 +2868,28 @@ def _render_connections_svg(connects: list[dict], shape_index: dict,
             to_shape, conn["to_cell"], page_h, shape_index)
 
         if from_pt and to_pt:
+            # Clip endpoints to shape edges
+            fw = abs(_get_cell_float(from_shape, "Width")) * _INCH_TO_PX / 2
+            fh = abs(_get_cell_float(from_shape, "Height")) * _INCH_TO_PX / 2
+            tw = abs(_get_cell_float(to_shape, "Width")) * _INCH_TO_PX / 2
+            th = abs(_get_cell_float(to_shape, "Height")) * _INCH_TO_PX / 2
+            
+            if fw > 5 and fh > 5:
+                fcx = (_get_cell_float(from_shape, "PinX")) * _INCH_TO_PX
+                fcy = (page_h - _get_cell_float(from_shape, "PinY")) * _INCH_TO_PX
+                from_pt = _clip_line_to_rect(to_pt[0], to_pt[1], from_pt[0], from_pt[1], fcx, fcy, fw, fh)
+            if tw > 5 and th > 5:
+                tcx = (_get_cell_float(to_shape, "PinX")) * _INCH_TO_PX
+                tcy = (page_h - _get_cell_float(to_shape, "PinY")) * _INCH_TO_PX
+                to_pt = _clip_line_to_rect(from_pt[0], from_pt[1], to_pt[0], to_pt[1], tcx, tcy, tw, th)
+
             lines.append(
                 f'<line x1="{from_pt[0]:.2f}" y1="{from_pt[1]:.2f}" '
                 f'x2="{to_pt[0]:.2f}" y2="{to_pt[1]:.2f}" '
-                f'stroke="#555555" stroke-width="1.50"/>'
+                f'stroke="#555555" stroke-width="1.50" '
+                f'marker-end="url(#arrow_end_2_555555)"/>'
             )
         elif to_pt:
-            # No from-point (no Controls) — draw vertical drop from bus Y
-            # Use bus shape's PinY as the connection Y
             bus_y = (page_h - _get_cell_float(from_shape, "PinY")) * _INCH_TO_PX
             lines.append(
                 f'<line x1="{to_pt[0]:.2f}" y1="{bus_y:.2f}" '
