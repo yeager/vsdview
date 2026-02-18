@@ -1563,9 +1563,13 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         ex_px = _safe_float(end_x) * _INCH_TO_PX
         ey_px = (page_h - _safe_float(end_y)) * _INCH_TO_PX
 
-        # Arrow markers
+        # Arrow markers — connectors (ObjType=2) default to EndArrow=4
+        # when no explicit arrow is set (Visio theme default)
         begin_arrow = int(_safe_float(_get_cell_val(shape, "BeginArrow", "0")))
         end_arrow = int(_safe_float(_get_cell_val(shape, "EndArrow", "0")))
+        if end_arrow == 0 and (obj_type == "2" or shape.get("master", "")):
+            # Default: filled triangle end arrow for connectors
+            end_arrow = 4
         begin_arrow_size = int(_safe_float(_get_cell_val(shape, "BeginArrowSize", "2")))
         end_arrow_size = int(_safe_float(_get_cell_val(shape, "EndArrowSize", "2")))
         marker_color = stroke.lstrip("#") if stroke != "none" else "333333"
