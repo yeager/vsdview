@@ -1638,8 +1638,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         if use_clip:
             clip_id = f"clip_{shape['id']}"
             # Add small padding (5%) to avoid cutting off edges
-            pad_x = w_px * 0.02
-            pad_y = h_px * 0.02
+            pad_x = w_px * 0.05
+            pad_y = h_px * 0.05
             lines.append(
                 f'<defs><clipPath id="{clip_id}">'
                 f'<rect x="{-pad_x:.2f}" y="{-pad_y:.2f}" '
@@ -1725,8 +1725,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     if is_connector and is_1d:
         # Ensure connector lines are visible (minimum 2.0px)
-        if stroke_width < 2.0:
-            stroke_width = 2.0
+        if stroke_width < 1.0:
+            stroke_width = 1.5
         # 1D shape — check for geometry (routed connectors) first
         bx = _safe_float(begin_x) * _INCH_TO_PX
         by = (page_h - _safe_float(begin_y)) * _INCH_TO_PX
@@ -2123,6 +2123,12 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
 
     # Split text and wrap
     text_lines = text.split("\n")
+    # Suppress master placeholder text (generic "text", "label", etc.)
+    _PLACEHOLDERS = {"text", "label", "title", "name", "value", "type"}
+    stripped = [t.strip() for t in text_lines if t.strip()]
+    if len(stripped) == 1 and stripped[0].lower() in _PLACEHOLDERS:
+        if shape.get("master"):
+            return
     if bullet > 0:
         bullet_char = "• " if bullet == 1 else "‣ " if bullet == 2 else "– "
         text_lines = [bullet_char + tl if tl.strip() else tl for tl in text_lines]
