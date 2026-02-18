@@ -681,6 +681,7 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
         "sub_shapes": [],
         "controls": {},      # Row_N -> {X, Y, ...}
         "connections": {},    # IX -> {X, Y, ...}
+        "user": {},           # User-defined cells (e.g., msvStructureType)
         "foreign_data": None, # ForeignData info for embedded images
     }
 
@@ -707,6 +708,14 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
                 for cell in row.findall(f"{_VTAG}Cell"):
                     ctrl[cell.get("N", "")] = cell.get("V", "")
                 sd["controls"][f"Row_{row_ix}"] = ctrl
+
+        elif sec_name == "User":
+            for row in section.findall(f"{_VTAG}Row"):
+                row_name = row.get("N", "")
+                user_vals = {}
+                for cell in row.findall(f"{_VTAG}Cell"):
+                    user_vals[cell.get("N", "")] = cell.get("V", "")
+                sd.setdefault("user", {})[row_name] = user_vals
 
         elif sec_name == "Connection":
             for row in section.findall(f"{_VTAG}Row"):
@@ -1210,11 +1219,13 @@ def _merge_shape_with_master(shape: dict, masters: dict,
     if not shape["para_formats"] and master_sd.get("para_formats"):
         shape["para_formats"] = master_sd["para_formats"]
 
-    # Merge controls and connections
+    # Merge controls, connections, and user cells
     if not shape.get("controls") and master_sd.get("controls"):
         shape["controls"] = master_sd["controls"]
     if not shape.get("connections") and master_sd.get("connections"):
         shape["connections"] = master_sd["connections"]
+    if not shape.get("user") and master_sd.get("user"):
+        shape["user"] = master_sd["user"]
 
     # Merge foreign data (embedded images) from master
     if not shape.get("foreign_data") and master_sd.get("foreign_data"):
@@ -1479,6 +1490,16 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     else:
         fill = "none"
 
+    # Container detection
+    is_container = False
+    user_data = shape.get("user", {})
+    structure_type = user_data.get("msvStructureType", {}).get("Value", "")
+    if structure_type == "Container":
+        is_container = True
+    shape_name = (shape.get("name_u", "") or shape.get("name", "")).lower()
+    if any(kw in shape_name for kw in ("dash square", "container", "swimlane")):
+        is_container = True
+
     # Shadow support
     shdw_pattern = _get_cell_val(shape, "ShdwPattern")
     shape_has_shadow = shdw_pattern and shdw_pattern != "0"
@@ -1492,6 +1513,17 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     stroke_width = line_weight
 
     dash_array = _get_dash_array(line_pattern, stroke_width)
+
+    # Container style override — dashed borders, semi-transparent fill
+    if is_container:
+        if fill != "none" and fill_foregnd:
+            fill = _lighten_color(fill_foregnd, 0.85)
+        elif fill == "none":
+            fill = "#F5F5F5"
+        line_pattern = 2
+        dash_array = _get_dash_array(2, stroke_width)
+        if stroke == "none":
+            stroke = line_color
 
     # Build style string
     style_parts = [
@@ -1843,7 +1875,11 @@ def _map_font_family(font_name: str) -> str:
 def _append_text_svg(lines: list, shape: dict, page_h: float,
                      w_px: float, h_px: float,
                      theme_colors: dict | None = None):
-    """Append SVG text elements for a shape's text."""
+    """Append SVG text elements for a shape's text.
+
+    Uses clipPath to constrain text within shape bounding box.
+    Supports multi-format text (text_parts with different cp indices).
+    """
     text = shape["text"]
     if not text:
         return
@@ -1856,16 +1892,12 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     w_inch = _get_cell_float(shape, "Width")
     h_inch = _get_cell_float(shape, "Height")
 
-    # Text block offset: TxtPinX/Y positions the text block within the shape
+    # Text block offset
     txt_pin_x = _get_cell_float(shape, "TxtPinX")
     txt_pin_y = _get_cell_float(shape, "TxtPinY")
-    txt_loc_pin_x = _get_cell_float(shape, "TxtLocPinX")
-    txt_loc_pin_y = _get_cell_float(shape, "TxtLocPinY")
 
     # Calculate text center in page coordinates
-    # Shape left = PinX - LocPinX, text position relative to shape
     if txt_pin_x > 0 or txt_pin_y > 0:
-        # Text block position within shape local coords
         shape_left = pin_x - loc_pin_x
         shape_top = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
         tx = shape_left + txt_pin_x * _INCH_TO_PX
@@ -1874,9 +1906,10 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
         tx = pin_x
         ty = pin_y
 
-    # Get text formatting
-    char_fmt = shape.get("char_formats", {}).get("0", {})
-    font_size = _safe_float(char_fmt.get("Size"), 0.1111) * _INCH_TO_PX  # ~8pt default
+    # Get text formatting — support multi-format text via text_parts
+    char_formats = shape.get("char_formats", {})
+    char_fmt = char_formats.get("0", {})
+    font_size = _safe_float(char_fmt.get("Size"), 0.1111) * _INCH_TO_PX
     if font_size < 6:
         font_size = 8
     elif font_size > 72:
@@ -1899,41 +1932,99 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     # Vertical alignment (0=top, 1=middle, 2=bottom)
     vert_align = int(_safe_float(_get_cell_val(shape, "VerticalAlign", "1")))
 
-    # Text rotation (TxtAngle in radians)
+    # Text rotation
     txt_angle = _get_cell_float(shape, "TxtAngle")
     txt_rotate = ""
     if abs(txt_angle) > 1e-6:
         txt_angle_deg = -math.degrees(txt_angle)
-        # For -90° rotation (swimlane labels), adjust position to prevent clipping
-        # Rotate around the text anchor point
         txt_rotate = f' transform="rotate({txt_angle_deg:.1f},{tx:.2f},{ty:.2f})"'
-        # Shift text inward for vertical labels to prevent left-edge clipping
         if abs(txt_angle_deg - 90) < 5 or abs(txt_angle_deg + 90) < 5:
             tx += font_size * 0.5
 
     # Bullet support
     bullet = int(_safe_float(para_fmt.get("Bullet", "0")))
 
-    # Font weight/style
+    # Container detection for top-left label positioning
+    user_data = shape.get("user", {})
+    structure_type = user_data.get("msvStructureType", {}).get("Value", "")
+    is_container = structure_type == "Container"
+    shape_name_lower = (shape.get("name_u", "") or shape.get("name", "")).lower()
+    if any(kw in shape_name_lower for kw in ("dash square", "container", "swimlane")):
+        is_container = True
+
+    # Font weight/style attributes
     fw = ' font-weight="bold"' if is_bold else ""
     fs = ' font-style="italic"' if is_italic else ""
     td = ' text-decoration="underline"' if is_underline else ""
 
-    # Text wrapping: parse TxtWidth for max text width
+    # Text width for wrapping
     txt_width = _get_cell_float(shape, "TxtWidth")
     txt_width_px = txt_width * _INCH_TO_PX if txt_width > 0 else w_px
 
-    # Split text into lines, then wrap long lines
-    text_lines = text.split("\n")
+    # clipPath for text clipping to shape bounds (prevents overlap)
+    clip_attr = ""
+    # Only clip text for shapes that are large enough to be containers
+    # or have lots of text that would overflow. Small shapes should not clip.
+    use_clip = w_px > 150 and h_px > 100
+    if use_clip:
+        clip_id = f"tclip_{shape['id']}"
+        clip_x = pin_x - loc_pin_x
+        clip_y = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
+        # Generous padding to avoid cutting text at edges
+        pad = font_size * 0.5
+        lines.append(
+            f'<defs><clipPath id="{clip_id}">'
+            f'<rect x="{clip_x - pad:.2f}" y="{clip_y - pad:.2f}" '
+            f'width="{w_px + 2*pad:.2f}" height="{h_px + 2*pad:.2f}"/>'
+            f'</clipPath></defs>'
+        )
+        clip_attr = f' clip-path="url(#{clip_id})"'
 
-    # Add bullet prefix
+    # Container text: position at top-left
+    if is_container:
+        vert_align = 0
+        halign = 0
+        text_anchor = "start"
+        tx = pin_x - loc_pin_x + 8  # Left-aligned with padding
+        ty = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y) + font_size + 4
+
+    # Build text lines with multi-format support
+    text_parts = shape.get("text_parts", [])
+    # Check if text_parts actually have visually different formatting
+    has_multi_format = False
+    if len(text_parts) > 1 and len(char_formats) > 1:
+        # Compare visual properties across formats — only flag as multi-format
+        # if there are real visible differences (font, color, style, size)
+        base_font = char_fmt.get("Font", "")
+        base_color = char_fmt.get("Color", "")
+        base_style = char_fmt.get("Style", "0")
+        base_size = char_fmt.get("Size", "")
+        for cp_key, cfmt in char_formats.items():
+            if cp_key == "0":
+                continue
+            cf = cfmt.get("Font", "")
+            cc = cfmt.get("Color", "")
+            cs = cfmt.get("Style", "0")
+            csz = cfmt.get("Size", "")
+            # Only compare fields that are set in BOTH formats
+            if cf and base_font and cf != base_font:
+                has_multi_format = True; break
+            if cc and base_color and cc != base_color:
+                has_multi_format = True; break
+            if cs != base_style:
+                has_multi_format = True; break
+            if csz and base_size and csz != base_size:
+                has_multi_format = True; break
+
+    # Split text and wrap
+    text_lines = text.split("\n")
     if bullet > 0:
         bullet_char = "• " if bullet == 1 else "‣ " if bullet == 2 else "– "
         text_lines = [bullet_char + tl if tl.strip() else tl for tl in text_lines]
 
-    # Simple word-wrap: estimate chars per line from font size
+    # Word-wrap
     if txt_width_px > 0 and font_size > 0:
-        avg_char_w = font_size * 0.55  # Approximate average char width
+        avg_char_w = font_size * 0.55
         max_chars = max(4, int(txt_width_px / avg_char_w))
         wrapped_lines = []
         for tline in text_lines:
@@ -1952,33 +2043,82 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                     wrapped_lines.append(current)
         text_lines = wrapped_lines
 
-    # Compute vertical position based on VerticalAlign
     total_height = len(text_lines) * font_size * 1.2
 
-    if len(text_lines) == 1:
-        # Single line: apply vertical alignment
-        if vert_align == 0:  # top
-            ty = pin_y - h_px / 2 + font_size
-        elif vert_align == 2:  # bottom
-            ty = pin_y + h_px / 2 - font_size * 0.3
-        # else middle (default)
+    if has_multi_format and text_parts:
+        # Multi-format text: render each part as a tspan
+        # Collect parts into lines by splitting on newlines
+        all_text = ""
+        part_spans = []
+        for part in text_parts:
+            part_text = part.get("text", "")
+            if not part_text:
+                continue
+            cp = part.get("cp", "0")
+            cfmt = char_formats.get(cp, char_fmt)
+            p_font_size = _safe_float(cfmt.get("Size"), 0.1111) * _INCH_TO_PX
+            if p_font_size < 6:
+                p_font_size = 8
+            p_color = _resolve_color(cfmt.get("Color", ""), theme_colors) or text_color
+            p_font = _map_font_family(cfmt.get("Font", font_name))
+            p_style = int(_safe_float(cfmt.get("Style", "0")))
+            p_bold = "bold" if p_style & 1 else "normal"
+            p_italic = "italic" if p_style & 2 else "normal"
+            part_spans.append({
+                "text": part_text, "font": p_font, "size": p_font_size,
+                "color": p_color, "bold": p_bold, "italic": p_italic
+            })
+            all_text += part_text
+
+        # Render as single text element with tspans
+        lines.append(
+            f'<text x="{tx:.2f}" y="{ty:.2f}" '
+            f'text-anchor="{text_anchor}" dominant-baseline="central" '
+            f'font-family="{font_family}" font-size="{font_size:.1f}" '
+            f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}{clip_attr}>'
+        )
+        for span in part_spans:
+            escaped = _escape_xml(span["text"])
+            # Handle newlines within spans
+            sub_lines = escaped.split("\n")
+            for k, sl in enumerate(sub_lines):
+                if not sl:
+                    continue
+                dy_attr = f' dy="{span["size"] * 1.2:.1f}" x="{tx:.2f}"' if k > 0 else ""
+                lines.append(
+                    f'<tspan font-family="{span["font"]}" '
+                    f'font-size="{span["size"]:.1f}" fill="{span["color"]}" '
+                    f'font-weight="{span["bold"]}" font-style="{span["italic"]}"{dy_attr}>'
+                    f'{sl}</tspan>'
+                )
+        lines.append('</text>')
+    elif len(text_lines) == 1:
+        # Single line
+        if not is_container:
+            if vert_align == 0:
+                ty = pin_y - h_px / 2 + font_size
+            elif vert_align == 2:
+                ty = pin_y + h_px / 2 - font_size * 0.3
 
         escaped = _escape_xml(text_lines[0])
         lines.append(
             f'<text x="{tx:.2f}" y="{ty:.2f}" '
             f'text-anchor="{text_anchor}" dominant-baseline="central" '
             f'font-family="{font_family}" font-size="{font_size:.1f}" '
-            f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}>'
+            f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}{clip_attr}>'
             f'{escaped}</text>'
         )
     else:
-        # Multi-line text with vertical alignment
-        if vert_align == 0:  # top
-            start_y = pin_y - h_px / 2 + font_size
-        elif vert_align == 2:  # bottom
-            start_y = pin_y + h_px / 2 - total_height + font_size * 0.6
-        else:  # middle
-            start_y = ty - total_height / 2 + font_size * 0.6
+        # Multi-line
+        if not is_container:
+            if vert_align == 0:
+                start_y = pin_y - h_px / 2 + font_size
+            elif vert_align == 2:
+                start_y = pin_y + h_px / 2 - total_height + font_size * 0.6
+            else:
+                start_y = ty - total_height / 2 + font_size * 0.6
+        else:
+            start_y = ty
 
         for j, tline in enumerate(text_lines):
             if not tline.strip():
@@ -1989,7 +2129,7 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
                 f'<text x="{tx:.2f}" y="{ly:.2f}" '
                 f'text-anchor="{text_anchor}" '
                 f'font-family="{font_family}" font-size="{font_size:.1f}" '
-                f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}>'
+                f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}{clip_attr}>'
                 f'{escaped}</text>'
             )
 
@@ -2386,8 +2526,21 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
             svg_lines.extend(_render_connections_svg(
                 bg_connects, bg_index, page_h, masters))
 
+    # Sort shapes: containers first (background), then regular shapes
+    # This ensures containers don't obscure the shapes inside them
+    def _shape_z_order(s):
+        """Return sort key: containers get low values (render first/behind)."""
+        user = s.get("user", {})
+        st = user.get("msvStructureType", {}).get("Value", "")
+        name = (s.get("name_u", "") or s.get("name", "")).lower()
+        if st == "Container" or any(kw in name for kw in ("dash square", "container", "swimlane")):
+            return 0  # Containers render first (behind everything)
+        return 1  # Regular shapes render on top
+
+    sorted_shapes = sorted(shapes, key=_shape_z_order)
+
     # Render foreground shapes (geometry only, text collected separately)
-    for s in shapes:
+    for s in sorted_shapes:
         svg_elements = _render_shape_svg(
             s, page_h, masters, media=media,
             page_rels=page_rels, used_markers=used_markers,
