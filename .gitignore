@@ -1,1 +1,6 @@
 __pycache__/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/vsdview/
+debian/vsdview.substvars
