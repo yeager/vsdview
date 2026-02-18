@@ -1837,15 +1837,28 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     # Text position
     pin_x = _get_cell_float(shape, "PinX") * _INCH_TO_PX
     pin_y = (page_h - _get_cell_float(shape, "PinY")) * _INCH_TO_PX
+    loc_pin_x = _get_cell_float(shape, "LocPinX") * _INCH_TO_PX
+    loc_pin_y = _get_cell_float(shape, "LocPinY") * _INCH_TO_PX
+    w_inch = _get_cell_float(shape, "Width")
+    h_inch = _get_cell_float(shape, "Height")
 
-    # Text block offset
+    # Text block offset: TxtPinX/Y positions the text block within the shape
     txt_pin_x = _get_cell_float(shape, "TxtPinX")
     txt_pin_y = _get_cell_float(shape, "TxtPinY")
     txt_loc_pin_x = _get_cell_float(shape, "TxtLocPinX")
     txt_loc_pin_y = _get_cell_float(shape, "TxtLocPinY")
 
-    tx = pin_x
-    ty = pin_y
+    # Calculate text center in page coordinates
+    # Shape left = PinX - LocPinX, text position relative to shape
+    if txt_pin_x > 0 or txt_pin_y > 0:
+        # Text block position within shape local coords
+        shape_left = pin_x - loc_pin_x
+        shape_top = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
+        tx = shape_left + txt_pin_x * _INCH_TO_PX
+        ty = shape_top + (abs(h_inch) - txt_pin_y) * _INCH_TO_PX
+    else:
+        tx = pin_x
+        ty = pin_y
 
     # Get text formatting
     char_fmt = shape.get("char_formats", {}).get("0", {})
