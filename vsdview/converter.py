@@ -1283,7 +1283,7 @@ def _merge_shape_with_master(shape: dict, masters: dict,
         # Mark that this shape had its own geometry (important for 1D connectors)
         shape["_has_own_geometry"] = True
 
-        # Check if this is a 1D connector — connectors use their own geometry
+        # Check if this is a 1D connector -- connectors use their own geometry
         # directly (routed paths), don't merge row-by-row with master.
         is_1d_shape = bool(
             shape["cells"].get("BeginX", {}).get("V")
@@ -1291,40 +1291,68 @@ def _merge_shape_with_master(shape: dict, masters: dict,
         ) or shape["cells"].get("ObjType", {}).get("V") == "2"
 
         if not is_1d_shape:
-            # Row-level merge for 2D shapes: page shape may only override some rows
-            for gi, local_geo in enumerate(shape["geometry"]):
-                if gi >= len(master_geos):
-                    break
-                master_geo = master_geos[gi]
-                local_rows = local_geo.get("rows", [])
-                master_rows = master_geo.get("rows", [])
+            # IX-based geometry section merge: local shape may override only
+            # specific geometry sections (by IX).  Missing sections come from
+            # the master, preserving the full shape geometry.
+            local_by_section_ix = {g.get("ix", str(i)): g for i, g in enumerate(shape["geometry"])}
+            merged_geos = []
+            master_ixs_seen = set()
 
-                # Build IX->row map for local overrides
-                local_by_ix = {}
-                for r in local_rows:
-                    ix = r.get("ix", "")
-                    if ix:
-                        local_by_ix[ix] = r
+            for mi, master_geo in enumerate(master_geos):
+                mix = master_geo.get("ix", str(mi))
+                master_ixs_seen.add(mix)
+                if mix in local_by_section_ix:
+                    local_geo = local_by_section_ix[mix]
+                    local_rows = local_geo.get("rows", [])
+                    master_rows = master_geo.get("rows", [])
 
-                if local_by_ix and len(local_rows) < len(master_rows):
-                    # Partial override — merge master rows with local overrides
-                    merged_rows = []
-                    for mr in master_rows:
-                        mix = mr.get("ix", "")
-                        if mix and mix in local_by_ix:
-                            # Merge cells: use local cell values, fall back to master
-                            lr = local_by_ix[mix]
-                            merged_cells = dict(mr["cells"])
-                            for cn, cv in lr["cells"].items():
-                                if cv.get("V"):
-                                    merged_cells[cn] = cv
-                            merged_row = {"type": lr["type"] or mr["type"],
-                                          "cells": merged_cells,
-                                          "ix": mix}
-                            merged_rows.append(merged_row)
-                        else:
-                            merged_rows.append(mr)
-                    local_geo["rows"] = merged_rows
+                    # Build IX->row map for local row overrides
+                    local_rows_by_ix = {}
+                    for r in local_rows:
+                        rix = r.get("ix", "")
+                        if rix:
+                            local_rows_by_ix[rix] = r
+
+                    if local_rows_by_ix and len(local_rows) < len(master_rows):
+                        # Partial row override -- merge master rows with local overrides
+                        merged_rows = []
+                        for mr in master_rows:
+                            mrix = mr.get("ix", "")
+                            if mrix and mrix in local_rows_by_ix:
+                                lr = local_rows_by_ix[mrix]
+                                merged_cells_r = dict(mr["cells"])
+                                for cn, cv in lr["cells"].items():
+                                    if cv.get("V"):
+                                        merged_cells_r[cn] = cv
+                                merged_row = {"type": lr["type"] or mr["type"],
+                                              "cells": merged_cells_r,
+                                              "ix": mrix}
+                                merged_rows.append(merged_row)
+                            else:
+                                merged_rows.append(mr)
+                        local_geo["rows"] = merged_rows
+                    # Inherit NoFill/NoLine/NoShow from master if not set locally
+                    for flag in ("no_fill", "no_line", "no_show"):
+                        if not local_geo.get(flag) and master_geo.get(flag):
+                            local_geo[flag] = master_geo[flag]
+                    merged_geos.append(local_geo)
+                else:
+                    # Section not overridden locally -- use master section
+                    merged_geos.append(master_geo)
+
+            # Add any local-only sections (IX not in master)
+            for lix, lg in local_by_section_ix.items():
+                if lix not in master_ixs_seen:
+                    merged_geos.append(lg)
+
+            shape["geometry"] = merged_geos
+            # Store master dims for coordinate scaling of inherited geometry
+            master_w_val = master_sd.get("cells", {}).get("Width", {}).get("V")
+            master_h_val = master_sd.get("cells", {}).get("Height", {}).get("V")
+            if master_w_val:
+                shape["_master_w"] = _safe_float(master_w_val)
+            if master_h_val:
+                shape["_master_h"] = _safe_float(master_h_val)
 
     # Merge text: use local if present, otherwise master
     if not shape["text"] and not shape.get("_has_text_elem") and master_sd.get("text") and shape.get("type") != "Group":
@@ -2074,14 +2102,18 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     txt_pin_y = _get_cell_float(shape, "TxtPinY")
 
     # Calculate text center in page coordinates
-    if txt_pin_x > 0 or txt_pin_y > 0:
+    # Use TxtPinX/Y when explicitly set (including negative values for below-shape labels)
+    _has_txt_pin = ("TxtPinX" in shape.get("cells", {}) or
+                    "TxtPinY" in shape.get("cells", {}))
+    if _has_txt_pin or txt_pin_x != 0 or txt_pin_y != 0:
         shape_left = pin_x - loc_pin_x
         shape_top = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
-        tx = shape_left + txt_pin_x * _INCH_TO_PX
-        ty = shape_top + (abs(h_inch) - txt_pin_y) * _INCH_TO_PX
+        _eff_txt_pin_x = txt_pin_x if txt_pin_x != 0 else abs(w_inch) * 0.5
+        _eff_txt_pin_y = txt_pin_y
+        tx = shape_left + _eff_txt_pin_x * _INCH_TO_PX
+        ty = shape_top + (abs(h_inch) - _eff_txt_pin_y) * _INCH_TO_PX
     else:
-        # Default to shape center — use pin position offset by half width
-        # For shapes where PinX=0, center text at Width/2
+        # Default to shape center
         shape_left = pin_x - loc_pin_x
         shape_top = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
         tx = shape_left + abs(w_inch) * _INCH_TO_PX * 0.5
@@ -2748,10 +2780,29 @@ def _avoid_text_collisions(text_elements: list[str]) -> list[str]:
             "box_x": box_x, "box_y": box_y,
         }))
 
-    # Determine diagram density — skip collision avoidance if very dense
-    # (shifting makes dense diagrams worse, not better)
+    # Determine diagram density for collision strategy tuning
     text_count = sum(1 for _, d in parsed if d is not None)
     is_dense = text_count > 40  # dense diagram threshold
+
+    # For very dense diagrams, scale down font sizes to reduce collisions
+    if text_count > 60:
+        _scale = max(0.65, 40.0 / text_count)
+        for i, (elem, data) in enumerate(parsed):
+            if data is not None:
+                data["fs"] *= _scale
+                data["est_w"] = len(data["clean_txt"]) * data["fs"] * 0.55
+                data["est_h"] = data["fs"] * 1.3
+                if 'text-anchor="start"' in elem:
+                    data["box_x"] = data["tx"] - 1
+                elif 'text-anchor="end"' in elem:
+                    data["box_x"] = data["tx"] - data["est_w"] - 1
+                else:
+                    data["box_x"] = data["tx"] - data["est_w"] / 2 - 1
+                data["box_y"] = data["ty"] - data["est_h"] * 0.55
+                # Update SVG element with scaled font size
+                _orig_fs_str = f'font-size="{float(data["fs"] / _scale):.2f}'
+                _new_fs_str = f'font-size="{data["fs"]:.2f}'
+                parsed[i] = (elem.replace(_orig_fs_str, _new_fs_str, 1), data)
 
     placed_boxes = []  # list of (x, y, w, h)
     collided_indices = set()  # track which texts actually collided
@@ -2767,22 +2818,34 @@ def _avoid_text_collisions(text_elements: list[str]) -> list[str]:
         est_w, est_h = data["est_w"], data["est_h"]
         box_x, box_y = data["box_x"], data["box_y"]
 
-        # Collision detection: shift down if overlapping (but limit in dense diagrams)
-        max_attempts = 1 if is_dense else 3
+        # Collision detection: shift text to avoid overlaps
+        # For dense diagrams, try shifting in multiple directions
+        max_attempts = 5 if is_dense else 3
         had_collision = False
-        for _ in range(max_attempts):
+        best_shift = None
+        for attempt in range(max_attempts):
             collision = False
             for j, (px, py, pw, ph) in enumerate(placed_boxes):
                 overlap_x = min(box_x + est_w + 2, px + pw) - max(box_x, px)
                 overlap_y = min(box_y + est_h, py + ph) - max(box_y, py)
                 if overlap_x > 0 and overlap_y > 0:
-                    # Only shift if overlap is significant (>30% of text height)
-                    if overlap_y > est_h * 0.3:
+                    # Only shift if overlap is significant (>20% of text height)
+                    if overlap_y > est_h * 0.2:
                         collision = True
                         had_collision = True
                         collided_indices.add(j)
-                        ty += est_h + 2
-                        box_y = ty - est_h * 0.55
+                        # Alternate shift direction: down first, then try right
+                        if attempt % 2 == 0:
+                            ty += est_h + 2
+                            box_y = ty - est_h * 0.55
+                        else:
+                            tx += est_w * 0.3
+                            if 'text-anchor="start"' in elem:
+                                box_x = tx - 1
+                            elif 'text-anchor="end"' in elem:
+                                box_x = tx - est_w - 1
+                            else:
+                                box_x = tx - est_w / 2 - 1
                         break
             if not collision:
                 break
