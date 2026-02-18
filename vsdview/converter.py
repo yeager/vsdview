@@ -2091,6 +2091,19 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
         bullet_char = "• " if bullet == 1 else "‣ " if bullet == 2 else "– "
         text_lines = [bullet_char + tl if tl.strip() else tl for tl in text_lines]
 
+    # Auto-reduce font size for small shapes with long text
+    if txt_width_px > 0 and font_size > 0 and not is_container:
+        avg_char_w = font_size * 0.55
+        total_text_len = sum(len(tl) for tl in text_lines)
+        # Estimate how many lines at current font size
+        est_chars_per_line = max(4, int(txt_width_px / avg_char_w))
+        est_lines = max(1, (total_text_len + est_chars_per_line - 1) // est_chars_per_line)
+        est_text_height = est_lines * font_size * 1.2
+        # If text would overflow height, reduce font size
+        if est_text_height > h_px * 1.5 and h_px > 0:
+            scale_factor = min(1.0, h_px * 1.2 / est_text_height)
+            font_size = max(6, font_size * scale_factor)
+
     # Word-wrap
     if txt_width_px > 0 and font_size > 0:
         avg_char_w = font_size * 0.55
