@@ -135,6 +135,22 @@ def _is_black(color: str) -> bool:
     return c in ("#000000", "#000", "0")
 
 
+def _is_dark_color(color: str) -> bool:
+    """Check if a color is dark (luminance < 0.4)."""
+    if not color or color == "none":
+        return False
+    c = color.strip().lstrip("#")
+    if len(c) == 6:
+        try:
+            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+            # Relative luminance
+            lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+            return lum < 0.4
+        except ValueError:
+            pass
+    return False
+
+
 def _hsl_to_rgb(h: int, s: int, l: int) -> str:
     """Convert Visio HSL (h=0-255, s=0-255, l=0-255) to #RRGGBB."""
     # Normalize to 0-1 range
@@ -1710,6 +1726,25 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     if _lc_formula and (_lc_formula == "Inh" or "THEME" in _lc_formula):
         if theme_colors:
             line_color = theme_colors.get("dk1", line_color)
+
+    # QuickStyleLineColor — resolve line color from theme
+    qs_line_color_val = _get_cell_val(shape, "QuickStyleLineColor")
+    if theme_colors and qs_line_color_val:
+        qs_line_color = int(_safe_float(qs_line_color_val, -1))
+        if qs_line_color >= 0:
+            _theme_line = _resolve_quickstyle_color(qs_line_color, theme_colors)
+            if _theme_line and (_lc_formula and "THEMEVAL" in _lc_formula):
+                line_color = _theme_line
+
+    # QuickStyleFontColor — resolve text color from theme  
+    qs_font_color_val = _get_cell_val(shape, "QuickStyleFontColor")
+    if theme_colors and qs_font_color_val:
+        qs_font_color = int(_safe_float(qs_font_color_val, -1))
+        if qs_font_color >= 0:
+            _theme_font = _resolve_quickstyle_color(qs_font_color, theme_colors)
+            if _theme_font:
+                # Store for text rendering
+                shape["_theme_text_color"] = _theme_font
         elif "THEMEVAL" in _lc_formula and _is_black(line_color):
             # THEMEVAL line color defaulting to black — use dark accent instead
             line_color = "#1F477D"  # Dark blue, matches Visio default
@@ -2257,6 +2292,14 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
         font_size = 72
 
     text_color = _resolve_color(char_fmt.get("Color", ""), theme_colors) or "#000000"
+    # Use theme text color if available and char color is default
+    if text_color == "#000000" and shape.get("_theme_text_color"):
+        text_color = shape["_theme_text_color"]
+    # Auto-contrast: white text on dark fills
+    if text_color == "#000000":
+        shape_fill = shape.get("cells", {}).get("FillForegnd", {}).get("V", "")
+        if shape_fill and _is_dark_color(_resolve_color(shape_fill, theme_colors)):
+            text_color = "#FFFFFF"
     font_name = char_fmt.get("Font", "")
     font_family = _map_font_family(font_name)
     style_bits = int(_safe_float(char_fmt.get("Style", "0")))
