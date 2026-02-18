@@ -1567,7 +1567,7 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
         # When FillForegnd is completely absent but QuickStyleFillColor exists,
         # the shape relies entirely on theme for its fill color
-        if not fill_foregnd and not _ff_formula and _theme_fill:
+        if not fill_foregnd and not _ff_formula and _theme_fill and not _is_black(_theme_fill):
             fill_foregnd = _theme_fill
 
     # GUARD(color_index) in Visio stencils are theme accent placeholders.
