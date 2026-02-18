@@ -1314,7 +1314,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                        theme_colors: dict | None = None,
                        layers: dict | None = None,
                        gradients: dict | None = None,
-                       has_shadow: set | None = None) -> list[str]:
+                       has_shadow: set | None = None,
+                       text_layer: list | None = None) -> list[str]:
     """Render a single shape as SVG elements. Returns list of SVG strings."""
     shape = _merge_shape_with_master(shape, masters, parent_master_id)
     if media is None:
@@ -1333,6 +1334,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         has_shadow = set()
 
     lines = []
+    # text_layer collects text SVG to render on top of all geometry
+    _collect_text = text_layer is not None
 
     # Skip shapes that are invisible or purely connection/control metadata
     vis_val = _get_cell_val(shape, "Visible")
@@ -1584,12 +1587,16 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             lines.extend(_render_shape_svg(
                 sub, group_h, masters, group_master_id, _depth + 1,
                 media, page_rels, used_markers, output_dir,
-                theme_colors, layers, gradients, has_shadow))
+                theme_colors, layers, gradients, has_shadow,
+                text_layer=text_layer))
         lines.append('</g>')
         # Render text for the group itself (but not auto-generated name labels
         # for groups — sub-shapes already provide visible content)
         if shape["text"]:
-            _append_text_svg(lines, shape, page_h, w_px, h_px, theme_colors)
+            if _collect_text:
+                _append_text_svg(text_layer, shape, page_h, w_px, h_px, theme_colors)
+            else:
+                _append_text_svg(lines, shape, page_h, w_px, h_px, theme_colors)
         return lines
 
     # --- Compute transform ---
@@ -1790,7 +1797,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     # --- Text rendering ---
     if shape["text"]:
-        _append_text_svg(lines, shape, page_h, w_px, h_px, theme_colors)
+        if _collect_text:
+            _append_text_svg(text_layer, shape, page_h, w_px, h_px, theme_colors)
+        else:
+            _append_text_svg(lines, shape, page_h, w_px, h_px, theme_colors)
 
     # No fallback rectangle for shapes inside groups (sub-shapes)
     # is handled by skipping the else branch when geometry/1D absent
@@ -2357,6 +2367,9 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
     gradients: dict[str, dict] = {}
     has_shadow: set[str] = set()
 
+    # Two-pass rendering: geometry first, then text on top
+    text_layer: list[str] = []
+
     # Render background page shapes first (behind foreground)
     if bg_shapes:
         svg_lines.append('<!-- Background page -->')
@@ -2365,20 +2378,22 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
                 s, page_h, masters, media=media,
                 page_rels=page_rels, used_markers=used_markers,
                 output_dir=output_dir, theme_colors=theme_colors,
-                layers=layers, gradients=gradients, has_shadow=has_shadow)
+                layers=layers, gradients=gradients, has_shadow=has_shadow,
+                text_layer=text_layer)
             svg_lines.extend(svg_elements)
         if bg_connects:
             bg_index = _build_shape_index(bg_shapes)
             svg_lines.extend(_render_connections_svg(
                 bg_connects, bg_index, page_h, masters))
 
-    # Render foreground shapes
+    # Render foreground shapes (geometry only, text collected separately)
     for s in shapes:
         svg_elements = _render_shape_svg(
             s, page_h, masters, media=media,
             page_rels=page_rels, used_markers=used_markers,
             output_dir=output_dir, theme_colors=theme_colors,
-            layers=layers, gradients=gradients, has_shadow=has_shadow)
+            layers=layers, gradients=gradients, has_shadow=has_shadow,
+            text_layer=text_layer)
         svg_lines.extend(svg_elements)
 
     # Render connections
@@ -2386,6 +2401,11 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
         shape_index = _build_shape_index(shapes)
         conn_lines = _render_connections_svg(connects, shape_index, page_h, masters)
         svg_lines.extend(conn_lines)
+
+    # Text layer on top of everything
+    if text_layer:
+        svg_lines.append('<!-- Text layer -->')
+        svg_lines.extend(text_layer)
 
     svg_lines.append("</svg>")
 
