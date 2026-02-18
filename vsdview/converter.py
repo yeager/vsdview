@@ -926,8 +926,27 @@ def _geometry_to_path(geo: dict, w: float, h: float,
         elif rt == "NURBSTo":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
-            # Approximate NURBS as line for now (proper NURBS requires complex computation)
-            d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
+            # Parse NURBS formula from E cell for control points
+            e_val = cells.get("E", {}).get("V", "")
+            nurbs_pts = _parse_nurbs_formula(e_val, cx, cy, x, y, sx, sy)
+            if nurbs_pts and len(nurbs_pts) >= 2:
+                # Use quadratic or cubic Bézier approximation
+                if len(nurbs_pts) == 2:
+                    # Two control points → cubic Bézier
+                    cp1x, cp1y = nurbs_pts[0]
+                    cp2x, cp2y = nurbs_pts[1]
+                    d_parts.append(
+                        f"C {cp1x * _INCH_TO_PX:.2f} {(abs_h - cp1y) * _INCH_TO_PX:.2f} "
+                        f"{cp2x * _INCH_TO_PX:.2f} {(abs_h - cp2y) * _INCH_TO_PX:.2f} "
+                        f"{x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}"
+                    )
+                else:
+                    # Multiple points → approximate with lines through them
+                    for px_val, py_val in nurbs_pts:
+                        d_parts.append(f"L {px_val * _INCH_TO_PX:.2f} {(abs_h - py_val) * _INCH_TO_PX:.2f}")
+                    d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
+            else:
+                d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
         elif rt == "RelCurveTo":
@@ -1091,6 +1110,54 @@ def _append_elliptical_arc(d_parts: list, cx: float, cy: float,
         f"A {rx_px:.2f} {ry_px:.2f} {angle_deg:.1f} {large_arc} {sweep} "
         f"{x * _INCH_TO_PX:.2f} {(h - y) * _INCH_TO_PX:.2f}"
     )
+
+
+def _parse_nurbs_formula(e_val: str, cx: float, cy: float,
+                         ex: float, ey: float,
+                         sx: float = 1.0, sy: float = 1.0) -> list[tuple[float, float]]:
+    """Parse a NURBS formula and return intermediate control points.
+
+    NURBS format: NURBS(knotLast, degree, xType, yType, x1,y1,k1,w1, x2,y2,k2,w2, ...)
+    For degree=3 (cubic), we extract control points and scale them.
+    Returns list of (x, y) control points in shape coordinates.
+    """
+    if not e_val:
+        return []
+    m = re.match(r"NURBS\s*\((.*)\)", e_val, re.IGNORECASE)
+    if not m:
+        return []
+    try:
+        vals = [float(v.strip()) for v in m.group(1).split(",")]
+    except (ValueError, IndexError):
+        return []
+    if len(vals) < 8:
+        return []
+    knot_last = vals[0]
+    degree = int(vals[1])
+    x_type = int(vals[2])  # 0 = fraction of Width, 1 = absolute
+    y_type = int(vals[3])  # 0 = fraction of Height, 1 = absolute
+    # Extract control points (groups of 4: x, y, knot, weight)
+    points = []
+    for i in range(4, len(vals) - 3, 4):
+        px = vals[i]
+        py = vals[i + 1]
+        # knot = vals[i + 2], weight = vals[i + 3] — not used for simple approx
+        # Scale by sx/sy if coordinates are absolute
+        points.append((px * sx, py * sy))
+    # For cubic NURBS with 2 control points, interpolate as Bézier control points
+    # Map NURBS parameter space to Bézier: use control points as-is for approximation
+    # Scale from (cx,cy)→(ex,ey) using the NURBS control point positions
+    result = []
+    for px, py in points:
+        # Linear interpolation between start and end, offset by control point
+        bx = cx + (ex - cx) * px + (ey - cy) * (py - px) * 0.0  # simplified
+        by = cy + (ey - cy) * py + (ex - cx) * (px - py) * 0.0
+        # Actually for Visio NURBS quarter-circles, the control points are
+        # relative positions along the curve. Map them to absolute coords:
+        bx = cx + px * (ex - cx) if abs(ex - cx) > 1e-6 else cx + px * abs(ey - cy) * 0.5
+        by = cy + py * (ey - cy) if abs(ey - cy) > 1e-6 else cy + py * abs(ex - cx) * 0.5
+        result.append((bx, by))
+    return result
 
 
 def _parse_polyline_formula(formula: str, w: float, h: float) -> list[tuple[float, float]]:
