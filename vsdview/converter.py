@@ -401,6 +401,18 @@ def _parse_rels(zf: zipfile.ZipFile, page_file: str) -> dict[str, str]:
 def _image_to_data_uri(data: bytes, filename: str) -> str:
     """Convert image bytes to a base64 data URI."""
     ext = os.path.splitext(filename)[1].lower()
+    # Convert BMP to PNG for data URI (BMP not widely supported in SVG)
+    if ext in (".bmp", ".dib"):
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(data))
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            data = buf.getvalue()
+            ext = ".png"
+        except Exception:
+            pass
     mime = _IMAGE_MIMETYPES.get(ext, "image/png")
     b64 = base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"
@@ -409,13 +421,38 @@ def _image_to_data_uri(data: bytes, filename: str) -> str:
 def _save_image_file(data: bytes, filename: str, output_dir: str) -> str:
     """Save image to output directory and return relative filename.
 
-    For large images, saves to file instead of embedding as data URI
-    to avoid XML parser buffer limits in rsvg.
+    Converts BMP/EMF/WMF to PNG for broad SVG renderer compatibility.
     """
+    ext = os.path.splitext(filename)[1].lower()
+    # Convert BMP to PNG for compatibility
+    if ext in (".bmp", ".dib"):
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(data))
+            png_filename = os.path.splitext(filename)[0] + ".png"
+            dest = os.path.join(output_dir, png_filename)
+            img.save(dest, "PNG")
+            return png_filename
+        except Exception:
+            pass  # Fall through to raw save
+    # EMF/WMF: try to convert with PIL (limited support)
+    if ext in (".emf", ".wmf"):
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(data))
+            png_filename = os.path.splitext(filename)[0] + ".png"
+            dest = os.path.join(output_dir, png_filename)
+            img.save(dest, "PNG")
+            return png_filename
+        except Exception:
+            pass
+        return ""  # Don't save unsupported format
     dest = os.path.join(output_dir, filename)
     with open(dest, "wb") as f:
         f.write(data)
-    return filename  # Relative path for SVG href
+    return filename
 
 
 def _parse_foreign_data(shape_elem: ET.Element) -> dict | None:
@@ -1668,10 +1705,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             target = page_rels[fd["rel_id"]]
             img_name = target.split("/")[-1]
             if img_name in media:
-                if output_dir:
-                    img_href = _save_image_file(media[img_name], img_name, output_dir)
-                else:
-                    img_href = _image_to_data_uri(media[img_name], img_name)
+                # Always use data URIs — cairosvg doesn't resolve file paths
+                img_href = _image_to_data_uri(media[img_name], img_name)
         elif fd.get("data"):
             ext_map = {"PNG": ".png", "JPEG": ".jpeg", "BMP": ".bmp",
                        "GIF": ".gif", "TIFF": ".tiff"}
@@ -1680,10 +1715,7 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             try:
                 raw = base64.b64decode(fd["data"])
                 fname = f"inline_{shape['id']}{fake_ext}"
-                if output_dir:
-                    img_href = _save_image_file(raw, fname, output_dir)
-                else:
-                    img_href = _image_to_data_uri(raw, fname)
+                img_href = _image_to_data_uri(raw, fname)
             except Exception:
                 pass
 
@@ -1699,7 +1731,7 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             lines.append(
                 f'<image x="{img_x_px:.2f}" y="{img_y_px:.2f}" '
                 f'width="{img_w_px:.2f}" height="{img_h_px:.2f}" '
-                f'href="{img_href}" '
+                f'xlink:href="{img_href}" '
                 f'preserveAspectRatio="xMidYMid meet" '
                 f'transform="{transform}"/>'
             )
