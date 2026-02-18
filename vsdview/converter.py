@@ -357,6 +357,64 @@ def _parse_layers(page_xml_root: ET.Element) -> dict[str, dict]:
     return layers
 
 
+
+def _parse_stylesheets(zf: zipfile.ZipFile) -> dict[str, dict]:
+    """Parse StyleSheet elements from visio/document.xml.
+
+    Returns {style_id: {"cells": {name: {"V": val, "F": formula}},
+                         "line_style": parent_id, "fill_style": parent_id,
+                         "text_style": parent_id}} .
+    """
+    styles: dict[str, dict] = {}
+    try:
+        doc_xml = zf.read("visio/document.xml")
+    except (KeyError, zipfile.BadZipFile):
+        return styles
+    try:
+        root = ET.fromstring(doc_xml)
+    except ET.ParseError:
+        return styles
+
+    for ss in root.findall(f".//{_VTAG}StyleSheet"):
+        sid = ss.get("ID", "")
+        if not sid:
+            continue
+        cells = {}
+        for cell in ss.findall(f"{_VTAG}Cell"):
+            n = cell.get("N", "")
+            v = cell.get("V", "")
+            f_attr = cell.get("F", "")
+            cells[n] = {"V": v, "F": f_attr}
+        styles[sid] = {
+            "cells": cells,
+            "line_style": ss.get("LineStyle", ""),
+            "fill_style": ss.get("FillStyle", ""),
+            "text_style": ss.get("TextStyle", ""),
+        }
+    return styles
+
+
+def _resolve_style_cell(styles: dict, style_id: str, cell_name: str,
+                         category: str = "line", _depth: int = 0) -> str:
+    """Walk the StyleSheet inheritance chain to resolve a cell value."""
+    if _depth > 10 or not style_id or style_id not in styles:
+        return ""
+    ss = styles[style_id]
+    cell = ss["cells"].get(cell_name, {})
+    val = cell.get("V", "")
+    formula = cell.get("F", "")
+
+    if val and formula != "Inh" and val != "Themed":
+        return val
+
+    parent_key = {"line": "line_style", "fill": "fill_style",
+                  "text": "text_style"}.get(category, "line_style")
+    parent_id = ss.get(parent_key, "")
+    if parent_id and parent_id != style_id:
+        return _resolve_style_cell(styles, parent_id, cell_name, category, _depth + 1)
+    return val
+
+
 def _extract_media(zf: zipfile.ZipFile) -> dict[str, bytes]:
     """Extract all files from visio/media/ in the ZIP.
 
@@ -720,6 +778,9 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
         "connections": {},    # IX -> {X, Y, ...}
         "user": {},           # User-defined cells (e.g., msvStructureType)
         "foreign_data": None, # ForeignData info for embedded images
+        "line_style": shape_elem.get("LineStyle", ""),
+        "fill_style": shape_elem.get("FillStyle", ""),
+        "text_style": shape_elem.get("TextStyle", ""),
     }
 
     # Parse top-level cells
@@ -1467,6 +1528,47 @@ def _compute_transform(shape: dict, page_h: float) -> str:
     return " ".join(parts)
 
 
+
+def _eval_simple_formula(formula: str, shape: dict, default: float = 0.0) -> float:
+    """Evaluate simple Visio ShapeSheet formulas.
+
+    Handles: GUARD(expr), IF(cond,t,f), Width*N, Height*N, simple arithmetic.
+    """
+    if not formula:
+        return default
+
+    f = formula.strip()
+    while f.upper().startswith("GUARD(") and f.endswith(")"):
+        f = f[6:-1].strip()
+    while f.upper().startswith("THEMEGUARD(") and f.endswith(")"):
+        f = f[11:-1].strip()
+
+    if_match = re.match(r"IF\s*\((.+),(.+),(.+)\)", f, re.IGNORECASE)
+    if if_match:
+        return _eval_simple_formula(if_match.group(2).strip(), shape, default)
+
+    w = _get_cell_float(shape, "Width", 1.0)
+    h = _get_cell_float(shape, "Height", 1.0)
+
+    expr = f
+    expr = re.sub(r"\bWidth\b", str(w), expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bHeight\b", str(h), expr, flags=re.IGNORECASE)
+
+    if "THEMEVAL" in expr.upper():
+        return default
+
+    if re.match(r"^[\d\s+\-*/.()]+$", expr):
+        try:
+            return float(eval(expr))
+        except Exception:
+            pass
+
+    try:
+        return float(f)
+    except (ValueError, TypeError):
+        return default
+
+
 def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                        parent_master_id: str = "",
                        _depth: int = 0,
@@ -1668,16 +1770,37 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     dash_array = _get_dash_array(line_pattern, stroke_width)
 
-    # Container style override — dashed borders, semi-transparent fill
+    # Container style — ensure visibility but respect actual styles
     if is_container:
-        if fill != "none" and fill_foregnd:
-            fill = _lighten_color(fill_foregnd, 0.90)
-        elif fill == "none":
+        if fill == "none" and not fill_foregnd:
             fill = "#F8F8F8"
-        line_pattern = 2
-        dash_array = "8,4"  # Standardized container dash pattern
+            fill_opacity = 0.5
+        elif fill != "none" and fill_opacity > 0.9:
+            # Containers with opaque fills should be semi-transparent
+            # so contents are visible
+            fill_opacity = max(0.3, fill_opacity * 0.5)
+        if not dash_array and line_pattern <= 1:
+            dash_array = "8,4"
         if stroke == "none":
-            stroke = line_color
+            stroke = "#AAAAAA"
+
+    # Fill opacity from FillForegndTrans (0=opaque, 1=transparent)
+    fill_trans = _get_cell_float(shape, "FillForegndTrans")
+    if fill_trans > 0 and fill_trans <= 1:
+        fill_opacity = 1.0 - fill_trans
+    elif fill_trans > 1:
+        fill_opacity = 1.0 - (fill_trans / 100.0)  # percentage
+    else:
+        fill_opacity = 1.0
+
+    # Line transparency
+    line_trans = _get_cell_float(shape, "LineColorTrans")
+    if line_trans > 0 and line_trans <= 1:
+        stroke_opacity = 1.0 - line_trans
+    elif line_trans > 1:
+        stroke_opacity = 1.0 - (line_trans / 100.0)
+    else:
+        stroke_opacity = 1.0
 
     # Build style string
     style_parts = [
@@ -1685,6 +1808,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         f'stroke="{stroke}"',
         f'stroke-width="{stroke_width:.2f}"',
     ]
+    if fill_opacity < 0.99:
+        style_parts.append(f'fill-opacity="{fill_opacity:.2f}"')
+    if stroke_opacity < 0.99:
+        style_parts.append(f'stroke-opacity="{stroke_opacity:.2f}"')
     if dash_array:
         style_parts.append(f'stroke-dasharray="{dash_array}"')
 
@@ -3269,6 +3396,7 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
         masters = _parse_master_shapes(zf)
         media = _extract_media(zf)
         theme_colors = _parse_theme(zf)
+        doc_styles = _parse_stylesheets(zf)
         # Parse master rels for ForeignData image resolution
         master_rels = {}
         for name in zf.namelist():
@@ -3480,6 +3608,7 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
             masters = _parse_master_shapes(zf)
             media = _extract_media(zf)
             theme_colors = _parse_theme(zf)
+            doc_styles = _parse_stylesheets(zf)
             page_files = _get_page_files(zf)
             all_dims = _parse_all_page_dimensions(zf)
             bg_map = _parse_background_pages(zf)

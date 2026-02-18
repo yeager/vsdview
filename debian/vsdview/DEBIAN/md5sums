@@ -1,0 +1,9 @@
+e46cad955cfdd4dd78471e2972740bb5  usr/bin/vsdview
+13628e6cd4b834f2858062f950cb0710  usr/lib/python3/dist-packages/vsdview/__init__.py
+12f8bcd0f5fa04cdb5a85f5a9fd3500e  usr/lib/python3/dist-packages/vsdview/__main__.py
+b7e023ea1313458d1238e74a69a529e7  usr/lib/python3/dist-packages/vsdview/app.py
+52a1a5a5c5078c4ee46256a1634cf907  usr/lib/python3/dist-packages/vsdview/converter.py
+dbaa38f8c42fa3759c2e056c9543518e  usr/lib/python3/dist-packages/vsdview/recent.py
+0e6618223e9e274497ecd87557438b0d  usr/lib/python3/dist-packages/vsdview/window.py
+de4dda72f42ddd998b2b0cfa5b664979  usr/share/doc/vsdview/changelog.Debian.gz
+6aed8409e79bb9416b08036de810e33c  usr/share/man/man1/vsdview.1.gz

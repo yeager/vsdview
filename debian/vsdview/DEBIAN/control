@@ -1,0 +1,14 @@
+Package: vsdview
+Version: 0.3.8-1
+Architecture: all
+Maintainer: Daniel Nylander <daniel@danielnylander.se>
+Installed-Size: 196
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-rsvg-2.0
+Recommends: libreoffice-draw, librsvg2-bin
+Section: graphics
+Priority: optional
+Homepage: https://github.com/yeager/vsdview
+Description: Read-only viewer for Microsoft Visio files
+ VSDView is a minimal viewer for Microsoft Visio files (.vsdx and .vsd),
+ built with GTK4 and libadwaita. It uses LibreOffice in headless mode to
+ convert diagrams to SVG for rendering.

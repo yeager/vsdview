@@ -87,7 +87,7 @@ _LINE_PATTERNS = {
 _INCH_TO_PX = 72.0
 
 # Arrow size lookup (BeginArrowSize/EndArrowSize 0-6 -> scale factor)
-_ARROW_SIZES = {0: 0.5, 1: 0.65, 2: 0.8, 3: 1.0, 4: 1.5, 5: 2.0, 6: 2.5}
+_ARROW_SIZES = {0: 0.6, 1: 0.8, 2: 1.0, 3: 1.2, 4: 1.6, 5: 2.0, 6: 2.5}
 
 # MIME types for embedded images
 _IMAGE_MIMETYPES = {
@@ -561,7 +561,7 @@ def _arrow_marker_defs(used_markers: set[str]) -> list[str]:
             lines.append(
                 f'<marker id="{marker_id}" markerWidth="{marker_w:.1f}" '
                 f'markerHeight="{marker_h:.1f}" refX="0" refY="{marker_h/2:.1f}" '
-                f'orient="auto" markerUnits="strokeWidth">'
+                f'orient="auto" markerUnits="userSpaceOnUse">'
                 f'<polygon points="{marker_w:.1f} 0, 0 {marker_h/2:.1f}, '
                 f'{marker_w:.1f} {marker_h:.1f}" fill="{color}"/>'
                 f'</marker>'
@@ -571,7 +571,7 @@ def _arrow_marker_defs(used_markers: set[str]) -> list[str]:
             lines.append(
                 f'<marker id="{marker_id}" markerWidth="{marker_w:.1f}" '
                 f'markerHeight="{marker_h:.1f}" refX="{marker_w:.1f}" '
-                f'refY="{marker_h/2:.1f}" orient="auto" markerUnits="strokeWidth">'
+                f'refY="{marker_h/2:.1f}" orient="auto" markerUnits="userSpaceOnUse">'
                 f'<polygon points="0 0, {marker_w:.1f} {marker_h/2:.1f}, '
                 f'0 {marker_h:.1f}" fill="{color}"/>'
                 f'</marker>'
@@ -789,6 +789,7 @@ def _parse_single_shape(shape_elem: ET.Element) -> dict:
     if text_elem is not None:
         sd["text"] = "".join(text_elem.itertext()).strip()
         sd["text_parts"] = _parse_text_element(text_elem)
+        sd["_has_text_elem"] = True  # Mark that Text element exists (even if empty)
 
     # Parse sub-shapes (for groups)
     shapes_container = shape_elem.find(f"{_VTAG}Shapes")
@@ -961,6 +962,17 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, d_ratio, c_angle, abs_h)
             cx, cy = x, y
 
+        elif rt == "RelEllipticalArcTo":
+            # Same as EllipticalArcTo but with relative coordinates (0-1)
+            x = _safe_float(cells.get("X", {}).get("V")) * abs_w
+            y = _safe_float(cells.get("Y", {}).get("V")) * abs_h
+            a = _safe_float(cells.get("A", {}).get("V")) * abs_w  # control point X
+            b = _safe_float(cells.get("B", {}).get("V")) * abs_h  # control point Y
+            c_angle = _safe_float(cells.get("C", {}).get("V"))  # angle (radians)
+            d_ratio = _safe_float(cells.get("D", {}).get("V"))  # ratio major/minor
+            _append_elliptical_arc(d_parts, cx, cy, x, y, a, b, d_ratio, c_angle, abs_h)
+            cx, cy = x, y
+
         elif rt == "NURBSTo":
             x = _safe_float(cells.get("X", {}).get("V")) * sx
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
@@ -987,7 +999,7 @@ def _geometry_to_path(geo: dict, w: float, h: float,
                 d_parts.append(f"L {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
 
-        elif rt == "RelCurveTo":
+        elif rt in ("RelCurveTo", "RelCubBezTo"):
             x = _safe_float(cells.get("X", {}).get("V"))
             y = _safe_float(cells.get("Y", {}).get("V"))
             a = _safe_float(cells.get("A", {}).get("V"))
@@ -1271,7 +1283,7 @@ def _merge_shape_with_master(shape: dict, masters: dict,
         # Mark that this shape had its own geometry (important for 1D connectors)
         shape["_has_own_geometry"] = True
 
-        # Check if this is a 1D connector — connectors use their own geometry
+        # Check if this is a 1D connector -- connectors use their own geometry
         # directly (routed paths), don't merge row-by-row with master.
         is_1d_shape = bool(
             shape["cells"].get("BeginX", {}).get("V")
@@ -1279,45 +1291,73 @@ def _merge_shape_with_master(shape: dict, masters: dict,
         ) or shape["cells"].get("ObjType", {}).get("V") == "2"
 
         if not is_1d_shape:
-            # Row-level merge for 2D shapes: page shape may only override some rows
-            for gi, local_geo in enumerate(shape["geometry"]):
-                if gi >= len(master_geos):
-                    break
-                master_geo = master_geos[gi]
-                local_rows = local_geo.get("rows", [])
-                master_rows = master_geo.get("rows", [])
+            # IX-based geometry section merge: local shape may override only
+            # specific geometry sections (by IX).  Missing sections come from
+            # the master, preserving the full shape geometry.
+            local_by_section_ix = {g.get("ix", str(i)): g for i, g in enumerate(shape["geometry"])}
+            merged_geos = []
+            master_ixs_seen = set()
 
-                # Build IX->row map for local overrides
-                local_by_ix = {}
-                for r in local_rows:
-                    ix = r.get("ix", "")
-                    if ix:
-                        local_by_ix[ix] = r
+            for mi, master_geo in enumerate(master_geos):
+                mix = master_geo.get("ix", str(mi))
+                master_ixs_seen.add(mix)
+                if mix in local_by_section_ix:
+                    local_geo = local_by_section_ix[mix]
+                    local_rows = local_geo.get("rows", [])
+                    master_rows = master_geo.get("rows", [])
 
-                if local_by_ix and len(local_rows) < len(master_rows):
-                    # Partial override — merge master rows with local overrides
-                    merged_rows = []
-                    for mr in master_rows:
-                        mix = mr.get("ix", "")
-                        if mix and mix in local_by_ix:
-                            # Merge cells: use local cell values, fall back to master
-                            lr = local_by_ix[mix]
-                            merged_cells = dict(mr["cells"])
-                            for cn, cv in lr["cells"].items():
-                                if cv.get("V"):
-                                    merged_cells[cn] = cv
-                            merged_row = {"type": lr["type"] or mr["type"],
-                                          "cells": merged_cells,
-                                          "ix": mix}
-                            merged_rows.append(merged_row)
-                        else:
-                            merged_rows.append(mr)
-                    local_geo["rows"] = merged_rows
+                    # Build IX->row map for local row overrides
+                    local_rows_by_ix = {}
+                    for r in local_rows:
+                        rix = r.get("ix", "")
+                        if rix:
+                            local_rows_by_ix[rix] = r
+
+                    if local_rows_by_ix and len(local_rows) < len(master_rows):
+                        # Partial row override -- merge master rows with local overrides
+                        merged_rows = []
+                        for mr in master_rows:
+                            mrix = mr.get("ix", "")
+                            if mrix and mrix in local_rows_by_ix:
+                                lr = local_rows_by_ix[mrix]
+                                merged_cells_r = dict(mr["cells"])
+                                for cn, cv in lr["cells"].items():
+                                    if cv.get("V"):
+                                        merged_cells_r[cn] = cv
+                                merged_row = {"type": lr["type"] or mr["type"],
+                                              "cells": merged_cells_r,
+                                              "ix": mrix}
+                                merged_rows.append(merged_row)
+                            else:
+                                merged_rows.append(mr)
+                        local_geo["rows"] = merged_rows
+                    # Inherit NoFill/NoLine/NoShow from master if not set locally
+                    for flag in ("no_fill", "no_line", "no_show"):
+                        if not local_geo.get(flag) and master_geo.get(flag):
+                            local_geo[flag] = master_geo[flag]
+                    merged_geos.append(local_geo)
+                else:
+                    # Section not overridden locally -- use master section
+                    merged_geos.append(master_geo)
+
+            # Add any local-only sections (IX not in master)
+            for lix, lg in local_by_section_ix.items():
+                if lix not in master_ixs_seen:
+                    merged_geos.append(lg)
+
+            shape["geometry"] = merged_geos
+            # Store master dims for coordinate scaling of inherited geometry
+            master_w_val = master_sd.get("cells", {}).get("Width", {}).get("V")
+            master_h_val = master_sd.get("cells", {}).get("Height", {}).get("V")
+            if master_w_val:
+                shape["_master_w"] = _safe_float(master_w_val)
+            if master_h_val:
+                shape["_master_h"] = _safe_float(master_h_val)
 
     # Merge text: use local if present, otherwise master
-    if not shape["text"] and master_sd.get("text"):
+    if not shape["text"] and not shape.get("_has_text_elem") and master_sd.get("text") and shape.get("type") != "Group":
         txt = master_sd["text"]
-        if txt not in ("Label", "Abc"):
+        if txt not in ("Label", "Abc", "Table", "Entity", "Class"):
             shape["text"] = txt
             if not shape["text_parts"] and master_sd.get("text_parts"):
                 shape["text_parts"] = master_sd["text_parts"]
@@ -1389,10 +1429,13 @@ def _compute_transform(shape: dict, page_h: float) -> str:
     """
     pin_x = _get_cell_float(shape, "PinX") * _INCH_TO_PX
     pin_y = (page_h - _get_cell_float(shape, "PinY")) * _INCH_TO_PX
-    loc_pin_x = _get_cell_float(shape, "LocPinX") * _INCH_TO_PX
-    loc_pin_y_raw = _get_cell_float(shape, "LocPinY")
     w = _get_cell_float(shape, "Width")
     h = _get_cell_float(shape, "Height")
+    # Default LocPinX/Y to center of shape if not specified (Visio default)
+    _lpx_val = _get_cell_val(shape, "LocPinX")
+    loc_pin_x = (_safe_float(_lpx_val) if _lpx_val else abs(w) * 0.5) * _INCH_TO_PX
+    _lpy_val = _get_cell_val(shape, "LocPinY")
+    loc_pin_y_raw = _safe_float(_lpy_val) if _lpy_val else abs(h) * 0.5
     loc_pin_y = (abs(h) - loc_pin_y_raw) * _INCH_TO_PX  # Flip Y for local pin
 
     angle = _get_cell_float(shape, "Angle")
@@ -1524,7 +1567,7 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
         # When FillForegnd is completely absent but QuickStyleFillColor exists,
         # the shape relies entirely on theme for its fill color
-        if not fill_foregnd and not _ff_formula and _theme_fill:
+        if not fill_foregnd and not _ff_formula and _theme_fill and not _is_black(_theme_fill):
             fill_foregnd = _theme_fill
 
     # GUARD(color_index) in Visio stencils are theme accent placeholders.
@@ -1666,6 +1709,18 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         group_master_id = shape.get("master", "") or parent_master_id
         # Group's local coordinate system uses its own Width x Height
         group_h = h_inch
+
+        # If group has no Height, estimate from sub-shapes
+        if abs(group_h) < 1e-6 and shape.get("sub_shapes"):
+            max_sub_y = 0.0
+            for sub in shape["sub_shapes"]:
+                sub_py = _safe_float(sub.get("cells", {}).get("PinY", {}).get("V"))
+                sub_h = abs(_safe_float(sub.get("cells", {}).get("Height", {}).get("V")))
+                max_sub_y = max(max_sub_y, sub_py + sub_h / 2)
+            if max_sub_y > 0:
+                group_h = max_sub_y
+                h_inch = group_h
+                h_px = abs(group_h) * _INCH_TO_PX
 
         # Apply clipping only for large groups (containers/swimlanes),
         # not for small stencil/icon groups where sub-shapes may extend
@@ -1921,12 +1976,13 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 f'{fallback_style}{rx_attr} transform="{transform}"/>'
             )
             # If shape has no text but has a name, show name as label
-            if not shape.get("text"):
+            # Only for top-level shapes (depth 0), not sub-shapes in stencils
+            if not shape.get("text") and not shape.get("_has_text_elem") and _depth == 0:
                 shape_label = shape.get("name_u", "") or shape.get("name", "")
                 if shape_label and not shape_label.startswith("Sheet."):
                     # Clean up generic names
                     shape_label = shape_label.split(".")[-1] if "." in shape_label else shape_label
-                    if shape_label and len(shape_label) < 30:
+                    if shape_label and len(shape_label) < 30 and not shape_label.isdigit():
                         shape["text"] = shape_label
 
     # --- Embedded image rendering ---
@@ -2047,14 +2103,22 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     txt_pin_y = _get_cell_float(shape, "TxtPinY")
 
     # Calculate text center in page coordinates
-    if txt_pin_x > 0 or txt_pin_y > 0:
+    # Use TxtPinX/Y when explicitly set (including negative values for below-shape labels)
+    _has_txt_pin = ("TxtPinX" in shape.get("cells", {}) or
+                    "TxtPinY" in shape.get("cells", {}))
+    if _has_txt_pin or txt_pin_x != 0 or txt_pin_y != 0:
         shape_left = pin_x - loc_pin_x
         shape_top = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
-        tx = shape_left + txt_pin_x * _INCH_TO_PX
-        ty = shape_top + (abs(h_inch) - txt_pin_y) * _INCH_TO_PX
+        _eff_txt_pin_x = txt_pin_x if txt_pin_x != 0 else abs(w_inch) * 0.5
+        _eff_txt_pin_y = txt_pin_y
+        tx = shape_left + _eff_txt_pin_x * _INCH_TO_PX
+        ty = shape_top + (abs(h_inch) - _eff_txt_pin_y) * _INCH_TO_PX
     else:
-        tx = pin_x
-        ty = pin_y
+        # Default to shape center
+        shape_left = pin_x - loc_pin_x
+        shape_top = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
+        tx = shape_left + abs(w_inch) * _INCH_TO_PX * 0.5
+        ty = shape_top + abs(h_inch) * _INCH_TO_PX * 0.5
 
     # Get text formatting — support multi-format text via text_parts
     char_formats = shape.get("char_formats", {})
@@ -2192,6 +2256,13 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     if txt_width_px > 0 and font_size > 0 and not is_container:
         avg_char_w = font_size * 0.55
         total_text_len = sum(len(tl) for tl in text_lines)
+        # Horizontal overflow: reduce font if single-line text exceeds shape width
+        max_line_len = max((len(tl) for tl in text_lines), default=0)
+        est_line_w = max_line_len * avg_char_w
+        if est_line_w > txt_width_px * 1.1 and max_line_len > 4:
+            h_scale = txt_width_px * 0.95 / est_line_w
+            font_size = max(5, font_size * h_scale)
+            avg_char_w = font_size * 0.55
         # Estimate how many lines at current font size
         est_chars_per_line = max(4, int(txt_width_px / avg_char_w))
         est_lines = max(1, (total_text_len + est_chars_per_line - 1) // est_chars_per_line)
@@ -2717,10 +2788,29 @@ def _avoid_text_collisions(text_elements: list[str]) -> list[str]:
             "box_x": box_x, "box_y": box_y,
         }))
 
-    # Determine diagram density — skip collision avoidance if very dense
-    # (shifting makes dense diagrams worse, not better)
+    # Determine diagram density for collision strategy tuning
     text_count = sum(1 for _, d in parsed if d is not None)
     is_dense = text_count > 40  # dense diagram threshold
+
+    # For very dense diagrams, scale down font sizes to reduce collisions
+    if text_count > 60:
+        _scale = max(0.65, 40.0 / text_count)
+        for i, (elem, data) in enumerate(parsed):
+            if data is not None:
+                data["fs"] *= _scale
+                data["est_w"] = len(data["clean_txt"]) * data["fs"] * 0.55
+                data["est_h"] = data["fs"] * 1.3
+                if 'text-anchor="start"' in elem:
+                    data["box_x"] = data["tx"] - 1
+                elif 'text-anchor="end"' in elem:
+                    data["box_x"] = data["tx"] - data["est_w"] - 1
+                else:
+                    data["box_x"] = data["tx"] - data["est_w"] / 2 - 1
+                data["box_y"] = data["ty"] - data["est_h"] * 0.55
+                # Update SVG element with scaled font size
+                _orig_fs_str = f'font-size="{float(data["fs"] / _scale):.2f}'
+                _new_fs_str = f'font-size="{data["fs"]:.2f}'
+                parsed[i] = (elem.replace(_orig_fs_str, _new_fs_str, 1), data)
 
     placed_boxes = []  # list of (x, y, w, h)
     collided_indices = set()  # track which texts actually collided
@@ -2736,22 +2826,34 @@ def _avoid_text_collisions(text_elements: list[str]) -> list[str]:
         est_w, est_h = data["est_w"], data["est_h"]
         box_x, box_y = data["box_x"], data["box_y"]
 
-        # Collision detection: shift down if overlapping (but limit in dense diagrams)
-        max_attempts = 1 if is_dense else 3
+        # Collision detection: shift text to avoid overlaps
+        # For dense diagrams, try shifting in multiple directions
+        max_attempts = 5 if is_dense else 3
         had_collision = False
-        for _ in range(max_attempts):
+        best_shift = None
+        for attempt in range(max_attempts):
             collision = False
             for j, (px, py, pw, ph) in enumerate(placed_boxes):
                 overlap_x = min(box_x + est_w + 2, px + pw) - max(box_x, px)
                 overlap_y = min(box_y + est_h, py + ph) - max(box_y, py)
                 if overlap_x > 0 and overlap_y > 0:
-                    # Only shift if overlap is significant (>30% of text height)
-                    if overlap_y > est_h * 0.3:
+                    # Only shift if overlap is significant (>20% of text height)
+                    if overlap_y > est_h * 0.2:
                         collision = True
                         had_collision = True
                         collided_indices.add(j)
-                        ty += est_h + 2
-                        box_y = ty - est_h * 0.55
+                        # Alternate shift direction: down first, then try right
+                        if attempt % 2 == 0:
+                            ty += est_h + 2
+                            box_y = ty - est_h * 0.55
+                        else:
+                            tx += est_w * 0.3
+                            if 'text-anchor="start"' in elem:
+                                box_x = tx - 1
+                            elif 'text-anchor="end"' in elem:
+                                box_x = tx - est_w - 1
+                            else:
+                                box_x = tx - est_w / 2 - 1
                         break
             if not collision:
                 break
