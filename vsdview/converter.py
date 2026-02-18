@@ -1531,6 +1531,45 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         lines.append(
             f'<g transform="{transform}"{clip_attr}{shadow_attr}>'
         )
+        # Render the group's own geometry (if any)
+        if shape["geometry"]:
+            master_w = shape.get("_master_w", 0.0)
+            master_h = shape.get("_master_h", 0.0)
+            for geo in shape["geometry"]:
+                path_d = _geometry_to_path(geo, w_inch, h_inch, master_w, master_h)
+                if not path_d:
+                    continue
+                geo_fill = fill
+                geo_stroke = stroke
+                if geo.get("no_fill"):
+                    geo_fill = "none"
+                if geo.get("no_line"):
+                    geo_stroke = "none"
+                geo_style = (
+                    f'fill="{geo_fill}" stroke="{geo_stroke}" '
+                    f'stroke-width="{stroke_width:.2f}"'
+                )
+                if dash_array:
+                    geo_style += f' stroke-dasharray="{dash_array}"'
+                lines.append(f'<path d="{path_d}" {geo_style}{shadow_attr}/>')
+        # Render embedded image for the group
+        fd = shape.get("foreign_data")
+        if fd and media:
+            img_href = None
+            if fd.get("rel_id") and fd["rel_id"] in page_rels:
+                target = page_rels[fd["rel_id"]]
+                img_name = target.split("/")[-1]
+                if img_name in media:
+                    img_href = _image_to_data_uri(media[img_name], img_name)
+            if img_href:
+                img_w_px = w_px
+                img_h_px = h_px
+                lines.append(
+                    f'<image x="0" y="0" '
+                    f'width="{img_w_px:.2f}" height="{img_h_px:.2f}" '
+                    f'xlink:href="{img_href}" '
+                    f'preserveAspectRatio="xMidYMid meet"/>'
+                )
         for sub in shape.get("sub_shapes", []):
             lines.extend(_render_shape_svg(
                 sub, group_h, masters, group_master_id, _depth + 1,
@@ -1982,13 +2021,9 @@ def _normalize_page_dims(page_w: float, page_h: float,
     but the drawing scale means shapes are positioned in those coordinates.
     We keep the coordinate space but cap the SVG pixel size.
     """
-    # Convert page dimensions to inches
-    if units:
-        pw_u = units.get("PageWidth", "IN")
-        ph_u = units.get("PageHeight", "IN")
-        page_w = _unit_to_inches(page_w, pw_u)
-        page_h = _unit_to_inches(page_h, ph_u)
-
+    # Visio XML stores all values in internal units (inches) regardless of
+    # the U attribute (which is the display unit, not storage unit).
+    # Do NOT convert by U — values are already in inches.
     return page_w, page_h
 
 
