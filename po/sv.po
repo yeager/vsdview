@@ -123,15 +123,15 @@ msgstr "Kopiera text"
 
 #: vsdview/window.py:125
 msgid "System"
-msgstr ""
+msgstr "System"
 
 #: vsdview/window.py:126
 msgid "Light"
-msgstr ""
+msgstr "Ljust"
 
 #: vsdview/window.py:127
 msgid "Dark"
-msgstr ""
+msgstr "Mörkt"
 
 #: vsdview/window.py:128
 msgid "Canvas Background"
