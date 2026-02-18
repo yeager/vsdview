@@ -1401,10 +1401,13 @@ def _compute_transform(shape: dict, page_h: float) -> str:
     """
     pin_x = _get_cell_float(shape, "PinX") * _INCH_TO_PX
     pin_y = (page_h - _get_cell_float(shape, "PinY")) * _INCH_TO_PX
-    loc_pin_x = _get_cell_float(shape, "LocPinX") * _INCH_TO_PX
-    loc_pin_y_raw = _get_cell_float(shape, "LocPinY")
     w = _get_cell_float(shape, "Width")
     h = _get_cell_float(shape, "Height")
+    # Default LocPinX/Y to center of shape if not specified (Visio default)
+    _lpx_val = _get_cell_val(shape, "LocPinX")
+    loc_pin_x = (_safe_float(_lpx_val) if _lpx_val else abs(w) * 0.5) * _INCH_TO_PX
+    _lpy_val = _get_cell_val(shape, "LocPinY")
+    loc_pin_y_raw = _safe_float(_lpy_val) if _lpy_val else abs(h) * 0.5
     loc_pin_y = (abs(h) - loc_pin_y_raw) * _INCH_TO_PX  # Flip Y for local pin
 
     angle = _get_cell_float(shape, "Angle")
@@ -1678,6 +1681,18 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         group_master_id = shape.get("master", "") or parent_master_id
         # Group's local coordinate system uses its own Width x Height
         group_h = h_inch
+
+        # If group has no Height, estimate from sub-shapes
+        if abs(group_h) < 1e-6 and shape.get("sub_shapes"):
+            max_sub_y = 0.0
+            for sub in shape["sub_shapes"]:
+                sub_py = _safe_float(sub.get("cells", {}).get("PinY", {}).get("V"))
+                sub_h = abs(_safe_float(sub.get("cells", {}).get("Height", {}).get("V")))
+                max_sub_y = max(max_sub_y, sub_py + sub_h / 2)
+            if max_sub_y > 0:
+                group_h = max_sub_y
+                h_inch = group_h
+                h_px = abs(group_h) * _INCH_TO_PX
 
         # Apply clipping only for large groups (containers/swimlanes),
         # not for small stencil/icon groups where sub-shapes may extend
