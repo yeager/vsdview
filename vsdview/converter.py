@@ -1357,7 +1357,7 @@ def _merge_shape_with_master(shape: dict, masters: dict,
     # Merge text: use local if present, otherwise master
     if not shape["text"] and not shape.get("_has_text_elem") and master_sd.get("text") and shape.get("type") != "Group":
         txt = master_sd["text"]
-        if txt not in ("Label", "Abc"):
+        if txt not in ("Label", "Abc", "Table", "Entity", "Class"):
             shape["text"] = txt
             if not shape["text_parts"] and master_sd.get("text_parts"):
                 shape["text_parts"] = master_sd["text_parts"]
@@ -1976,7 +1976,8 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 f'{fallback_style}{rx_attr} transform="{transform}"/>'
             )
             # If shape has no text but has a name, show name as label
-            if not shape.get("text") and not shape.get("_has_text_elem"):
+            # Only for top-level shapes (depth 0), not sub-shapes in stencils
+            if not shape.get("text") and not shape.get("_has_text_elem") and _depth == 0:
                 shape_label = shape.get("name_u", "") or shape.get("name", "")
                 if shape_label and not shape_label.startswith("Sheet."):
                     # Clean up generic names
