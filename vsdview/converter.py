@@ -1216,6 +1216,10 @@ def _merge_shape_with_master(shape: dict, masters: dict,
     if not shape.get("connections") and master_sd.get("connections"):
         shape["connections"] = master_sd["connections"]
 
+    # Merge foreign data (embedded images) from master
+    if not shape.get("foreign_data") and master_sd.get("foreign_data"):
+        shape["foreign_data"] = master_sd["foreign_data"]
+
     return shape
 
 
@@ -2596,6 +2600,20 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
         masters = _parse_master_shapes(zf)
         media = _extract_media(zf)
         theme_colors = _parse_theme(zf)
+        # Parse master rels for ForeignData image resolution
+        master_rels = {}
+        for name in zf.namelist():
+            if name.startswith("visio/masters/_rels/master") and name.endswith(".xml.rels"):
+                try:
+                    rels_xml = zf.read(name)
+                    root = ET.fromstring(rels_xml)
+                    for rel in root.findall(f"{{{_RELS_NS}}}Relationship"):
+                        rid = rel.get("Id", "")
+                        target = rel.get("Target", "")
+                        if rid and target:
+                            master_rels[rid] = target
+                except (KeyError, ET.ParseError):
+                    pass
         page_files = _get_page_files(zf)
         all_dims = _parse_all_page_dimensions(zf)
         bg_map = _parse_background_pages(zf)
@@ -2647,9 +2665,12 @@ def _vsdx_to_svg(input_path: str, output_dir: str) -> list[str]:
                 if bg_idx in page_cache:
                     bg_shapes, bg_connects, _, _ = page_cache[bg_idx]
 
+            # Merge master_rels into page_rels for image resolution
+            all_rels = dict(master_rels)
+            all_rels.update(page_rels)
             svg_content = _shapes_to_svg(
                 shapes, page_w, page_h, masters, connects,
-                media, page_rels, bg_shapes, bg_connects, output_dir,
+                media, all_rels, bg_shapes, bg_connects, output_dir,
                 theme_colors, page_layers)
             svg_path = os.path.join(output_dir, f"{basename}_page{i + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
@@ -2830,9 +2851,12 @@ def convert_vsd_page_to_svg(input_path: str, page_index: int, output_dir: str) -
                     except (KeyError, ET.ParseError):
                         pass
 
+            # Merge master_rels into page_rels for image resolution
+            all_rels = dict(master_rels)
+            all_rels.update(page_rels)
             svg_content = _shapes_to_svg(
                 shapes, page_w, page_h, masters, connects,
-                media, page_rels, bg_shapes, bg_connects, output_dir,
+                media, all_rels, bg_shapes, bg_connects, output_dir,
                 theme_colors, page_layers)
             svg_path = os.path.join(output_dir, f"{basename}_page{page_index + 1}.svg")
             with open(svg_path, "w", encoding="utf-8") as f:
