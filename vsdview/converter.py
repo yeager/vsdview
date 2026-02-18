@@ -1498,14 +1498,20 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     style_str = " ".join(style_parts)
 
     # --- Check for 1D shape (connector/line) ---
-    begin_x = _get_cell_val(shape, "BeginX")
     begin_y = _get_cell_val(shape, "BeginY")
-    end_x = _get_cell_val(shape, "EndX")
     end_y = _get_cell_val(shape, "EndY")
+
+    # --- Check for 1D connector groups ---
+    # Some shapes (e.g., BPMN Sequence Flow) are Group type but also 1D connectors
+    # Render them as connectors if they have BeginX/EndX
+    begin_x = _get_cell_val(shape, "BeginX")
+    end_x = _get_cell_val(shape, "EndX")
     is_1d = bool(begin_x and end_x)
+    obj_type = _get_cell_val(shape, "ObjType")
+    is_1d_group = (shape_type == "Group" or bool(shape.get("sub_shapes"))) and is_1d
 
     # --- Group shapes ---
-    if shape_type == "Group" or shape.get("sub_shapes"):
+    if (shape_type == "Group" or shape.get("sub_shapes")) and not is_1d_group:
         transform = _compute_transform(shape, page_h)
         group_master_id = shape.get("master", "") or parent_master_id
         # Group's local coordinate system uses its own Width x Height
@@ -1589,7 +1595,6 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     has_geometry = bool(shape["geometry"])
 
     # For 1D connectors, use dedicated rendering even if they have master geometry
-    obj_type = _get_cell_val(shape, "ObjType")
     is_connector = is_1d or obj_type == "2"
 
     if is_connector and is_1d:
