@@ -2295,10 +2295,18 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     # Use theme text color if available and char color is default
     if text_color == "#000000" and shape.get("_theme_text_color"):
         text_color = shape["_theme_text_color"]
-    # Auto-contrast: white text on dark fills
-    if text_color == "#000000":
+    # Auto-contrast: ensure text is readable against fill
+    if _is_dark_color(text_color):
         shape_fill = shape.get("cells", {}).get("FillForegnd", {}).get("V", "")
-        if shape_fill and _is_dark_color(_resolve_color(shape_fill, theme_colors)):
+        resolved_fill = _resolve_color(shape_fill, theme_colors) if shape_fill else ""
+        # Also check QuickStyleFillColor for theme-based fills
+        if not resolved_fill:
+            qs_fc = shape.get("cells", {}).get("QuickStyleFillColor", {}).get("V", "")
+            if qs_fc and theme_colors:
+                qs_idx = int(_safe_float(qs_fc, -1))
+                if qs_idx >= 0:
+                    resolved_fill = _resolve_quickstyle_color(qs_idx, theme_colors) or ""
+        if resolved_fill and _is_dark_color(resolved_fill):
             text_color = "#FFFFFF"
     font_name = char_fmt.get("Font", "")
     font_family = _map_font_family(font_name)
