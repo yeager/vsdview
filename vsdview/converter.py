@@ -398,6 +398,36 @@ def _parse_rels(zf: zipfile.ZipFile, page_file: str) -> dict[str, str]:
     return rels
 
 
+
+def _convert_emf_to_svg(data: bytes, ext: str) -> bytes | None:
+    """Convert EMF/WMF data to SVG using inkscape. Returns SVG bytes or None."""
+    inkscape = shutil.which("inkscape")
+    if not inkscape:
+        return None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp_in:
+            tmp_in.write(data)
+            tmp_in_path = tmp_in.name
+        tmp_out_path = tmp_in_path + ".svg"
+        result = subprocess.run(
+            [inkscape, tmp_in_path, "--export-type=svg",
+             f"--export-filename={tmp_out_path}"],
+            capture_output=True, timeout=15
+        )
+        if result.returncode == 0 and os.path.exists(tmp_out_path):
+            with open(tmp_out_path, "rb") as f:
+                svg_data = f.read()
+            os.unlink(tmp_out_path)
+            os.unlink(tmp_in_path)
+            return svg_data
+        os.unlink(tmp_in_path)
+        if os.path.exists(tmp_out_path):
+            os.unlink(tmp_out_path)
+    except Exception:
+        pass
+    return None
+
+
 def _image_to_data_uri(data: bytes, filename: str) -> str:
     """Convert image bytes to a base64 data URI."""
     ext = os.path.splitext(filename)[1].lower()
@@ -413,6 +443,13 @@ def _image_to_data_uri(data: bytes, filename: str) -> str:
             ext = ".png"
         except Exception:
             pass
+    # EMF/WMF: convert to SVG via inkscape for high-quality rendering
+    if ext in (".emf", ".wmf"):
+        svg_data = _convert_emf_to_svg(data, ext)
+        if svg_data:
+            b64 = base64.b64encode(svg_data).decode("ascii")
+            return f"data:image/svg+xml;base64,{b64}"
+        return ""  # Skip unsupported format
     mime = _IMAGE_MIMETYPES.get(ext, "image/png")
     b64 = base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"
@@ -1633,13 +1670,14 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         # Apply clipping only for large groups (containers/swimlanes),
         # not for small stencil/icon groups where sub-shapes may extend
         # slightly beyond the nominal group bounds.
-        use_clip = w_px > 100 and h_px > 100
+        _has_text_subs = any(sub.get("text") for sub in shape.get("sub_shapes", []))
+        use_clip = w_px > 300 and h_px > 200 and not _has_text_subs
         clip_attr = ""
         if use_clip:
             clip_id = f"clip_{shape['id']}"
             # Add small padding (5%) to avoid cutting off edges
-            pad_x = w_px * 0.05
-            pad_y = h_px * 0.05
+            pad_x = w_px * 0.12
+            pad_y = h_px * 0.12
             lines.append(
                 f'<defs><clipPath id="{clip_id}">'
                 f'<rect x="{-pad_x:.2f}" y="{-pad_y:.2f}" '
@@ -2075,18 +2113,21 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     # For very small shapes, use the larger of TxtWidth and shape Width
     if txt_width_px < 40 and w_px > txt_width_px:
         txt_width_px = w_px
+    # For sub-shapes in groups, constrain text to actual shape width
+    if w_px > 0 and txt_width_px > w_px * 2:
+        txt_width_px = w_px * 0.92
 
     # clipPath for text clipping to shape bounds (prevents overlap)
     clip_attr = ""
     # Only clip text for shapes that are large enough to be containers
     # or have lots of text that would overflow. Small shapes should not clip.
-    use_clip = w_px > 150 and h_px > 100
+    use_clip = w_px > 250 and h_px > 200
     if use_clip:
         clip_id = f"tclip_{shape['id']}"
         clip_x = pin_x - loc_pin_x
         clip_y = pin_y - (abs(h_inch) * _INCH_TO_PX - loc_pin_y)
-        # Generous padding to avoid cutting text at edges
-        pad = font_size * 0.5
+        # Very generous padding to avoid cutting text at edges
+        pad = font_size * 1.5
         lines.append(
             f'<defs><clipPath id="{clip_id}">'
             f'<rect x="{clip_x - pad:.2f}" y="{clip_y - pad:.2f}" '
@@ -2696,7 +2737,7 @@ def _avoid_text_collisions(text_elements: list[str]) -> list[str]:
         box_x, box_y = data["box_x"], data["box_y"]
 
         # Collision detection: shift down if overlapping (but limit in dense diagrams)
-        max_attempts = 2 if is_dense else 4
+        max_attempts = 1 if is_dense else 3
         had_collision = False
         for _ in range(max_attempts):
             collision = False
@@ -2816,8 +2857,8 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
             # Add padding — 4% or at least 20px for margins
             content_w = max_x - min_x
             content_h = max_y - min_y
-            pad_x = max(30, content_w * 0.06)
-            pad_y = max(30, content_h * 0.06)
+            pad_x = max(50, content_w * 0.08)
+            pad_y = max(50, content_h * 0.08)
             # Use content bounds but don't shrink below page if content fills it
             vb_x = min(0, min_x - pad_x)
             vb_y = min(0, min_y - pad_y)
