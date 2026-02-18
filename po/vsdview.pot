@@ -1,14 +1,14 @@
 # SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR Daniel Nylander
-# This file is distributed under the same license as the vsdview package.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: vsdview\n"
-"Report-Msgid-Bugs-To: daniel@danielnylander.se\n"
-"POT-Creation-Date: 2026-02-17 18:14+0100\n"
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-02-18 08:25+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,22 +17,12 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: vsdview/app.py:220
-msgid ""
-"Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
-"is not affiliated with or endorsed by Microsoft."
-msgstr ""
-
-#: vsdview/app.py:232
-msgid "not found"
-msgstr ""
-
-#: vsdview/converter.py:2422
+#: vsdview/converter.py:3176
 #, python-format
 msgid "Unsupported file format: %s"
 msgstr ""
 
-#: vsdview/converter.py:2437
+#: vsdview/converter.py:3191
 #, python-format
 msgid ""
 "Cannot open %s files without libvisio. Install it:\n"
@@ -41,20 +31,20 @@ msgid ""
 "  macOS: brew install libvisio"
 msgstr ""
 
-#: vsdview/converter.py:2444
+#: vsdview/converter.py:3198
 msgid ""
 "Could not parse the Visio file. The file may be corrupt or unsupported.\n"
 "For best results, install libvisio-tools."
 msgstr ""
 
-#: vsdview/converter.py:2537
+#: vsdview/converter.py:3294
 msgid ""
 "Neither rsvg-convert nor cairosvg found. Install one:\n"
 "  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
 "  pip install cairosvg"
 msgstr ""
 
-#: vsdview/converter.py:2551
+#: vsdview/converter.py:3330
 msgid ""
 "cairosvg is required for PDF export. Install it:\n"
 "  pip install cairosvg"
@@ -167,4 +157,18 @@ msgstr ""
 
 #: vsdview/window.py:635
 msgid "OK"
+msgstr ""
+
+#: vsdview/app.py:220
+msgid "Translate this app: https://www.transifex.com/danielnylander/vsdview/"
+msgstr ""
+
+#: vsdview/app.py:221
+msgid ""
+"Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
+"is not affiliated with or endorsed by Microsoft."
+msgstr ""
+
+#: vsdview/app.py:233
+msgid "not found"
 msgstr ""
