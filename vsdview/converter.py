@@ -1751,6 +1751,37 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     return lines
 
 
+# Font family mapping: Visio font names -> SVG-compatible font stacks
+_FONT_MAP = {
+    "angsana new": "Noto Sans Thai, Noto Serif Thai, sans-serif",
+    "browallia new": "Noto Sans Thai, sans-serif",
+    "cordia new": "Noto Sans Thai, sans-serif",
+    "freesia upc": "Noto Sans Thai, sans-serif",
+    "tahoma": "Tahoma, Noto Sans, sans-serif",
+    "arial": "Arial, Noto Sans, sans-serif",
+    "calibri": "Calibri, Noto Sans, sans-serif",
+    "segoe ui": "Segoe UI, Noto Sans, sans-serif",
+    "times new roman": "Times New Roman, Noto Serif, serif",
+    "ms gothic": "Noto Sans JP, sans-serif",
+    "ms mincho": "Noto Serif JP, serif",
+    "simsun": "Noto Sans SC, sans-serif",
+    "simhei": "Noto Sans SC, sans-serif",
+    "microsoft yahei": "Noto Sans SC, sans-serif",
+    "malgun gothic": "Noto Sans KR, sans-serif",
+    "gulim": "Noto Sans KR, sans-serif",
+}
+
+def _map_font_family(font_name: str) -> str:
+    """Map a Visio font name to an SVG-compatible font-family string."""
+    if not font_name or font_name == "Themed":
+        return "Noto Sans, sans-serif"
+    key = font_name.lower().strip()
+    if key in _FONT_MAP:
+        return _FONT_MAP[key]
+    # Keep original font with fallbacks
+    return f"{font_name}, Noto Sans, sans-serif"
+
+
 def _append_text_svg(lines: list, shape: dict, page_h: float,
                      w_px: float, h_px: float,
                      theme_colors: dict | None = None):
@@ -1781,6 +1812,8 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
         font_size = 72
 
     text_color = _resolve_color(char_fmt.get("Color", ""), theme_colors) or "#000000"
+    font_name = char_fmt.get("Font", "")
+    font_family = _map_font_family(font_name)
     style_bits = int(_safe_float(char_fmt.get("Style", "0")))
     is_bold = bool(style_bits & 1)
     is_italic = bool(style_bits & 2)
@@ -1863,7 +1896,7 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
         lines.append(
             f'<text x="{tx:.2f}" y="{ty:.2f}" '
             f'text-anchor="{text_anchor}" dominant-baseline="central" '
-            f'font-family="sans-serif" font-size="{font_size:.1f}" '
+            f'font-family="{font_family}" font-size="{font_size:.1f}" '
             f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}>'
             f'{escaped}</text>'
         )
@@ -1884,7 +1917,7 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
             lines.append(
                 f'<text x="{tx:.2f}" y="{ly:.2f}" '
                 f'text-anchor="{text_anchor}" '
-                f'font-family="sans-serif" font-size="{font_size:.1f}" '
+                f'font-family="{font_family}" font-size="{font_size:.1f}" '
                 f'fill="{text_color}"{fw}{fs}{td}{txt_rotate}>'
                 f'{escaped}</text>'
             )
