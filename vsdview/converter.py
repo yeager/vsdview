@@ -2256,6 +2256,13 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     if txt_width_px > 0 and font_size > 0 and not is_container:
         avg_char_w = font_size * 0.55
         total_text_len = sum(len(tl) for tl in text_lines)
+        # Horizontal overflow: reduce font if single-line text exceeds shape width
+        max_line_len = max((len(tl) for tl in text_lines), default=0)
+        est_line_w = max_line_len * avg_char_w
+        if est_line_w > txt_width_px * 1.1 and max_line_len > 4:
+            h_scale = txt_width_px * 0.95 / est_line_w
+            font_size = max(5, font_size * h_scale)
+            avg_char_w = font_size * 0.55
         # Estimate how many lines at current font size
         est_chars_per_line = max(4, int(txt_width_px / avg_char_w))
         est_lines = max(1, (total_text_len + est_chars_per_line - 1) // est_chars_per_line)
