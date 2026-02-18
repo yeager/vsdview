@@ -1662,6 +1662,16 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 geo_stroke = stroke
                 if geo.get("no_fill"):
                     geo_fill = "none"
+                # Detect open paths: if start != end, don't fill
+                # (SVG auto-closes filled paths, creating visual artifacts)
+                if geo_fill != "none" and "Z" not in path_d:
+                    import re as _gre
+                    _coords = _gre.findall(r'[-+]?[\d.]+', path_d)
+                    if len(_coords) >= 4:
+                        _sx, _sy = float(_coords[0]), float(_coords[1])
+                        _ex, _ey = float(_coords[-2]), float(_coords[-1])
+                        if abs(_sx - _ex) > 2.0 or abs(_sy - _ey) > 2.0:
+                            geo_fill = "none"
                 if geo.get("no_line"):
                     geo_stroke = "none"
                 geo_style = (
