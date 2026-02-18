@@ -1413,7 +1413,9 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     lines = []
     # text_layer collects text SVG to render on top of all geometry
-    _collect_text = text_layer is not None
+    # Only collect for top-level shapes (depth 0); sub-shapes render
+    # text within their group transform to get correct positioning
+    _collect_text = text_layer is not None and _depth == 0
 
     # Skip shapes that are invisible or purely connection/control metadata
     vis_val = _get_cell_val(shape, "Visible")
@@ -2508,39 +2510,49 @@ def _shapes_to_svg(shapes: list[dict], page_w: float, page_h: float,
     page_w_px = page_w * _INCH_TO_PX
     page_h_px = page_h * _INCH_TO_PX
 
-    # For very large pages (scaled drawings like floorplans),
-    # compute the bounding box of all shapes and use that as the viewBox
-    # to avoid massive empty SVG canvases.
+    # Compute content bounding box for optimal viewBox.
+    # This prevents clipped content (shapes near page edges) and removes
+    # excessive whitespace (content only using part of the page).
     vb_x, vb_y = 0.0, 0.0
     vb_w, vb_h = page_w_px, page_h_px
     max_svg_px = 4000.0
 
-    if max(page_w_px, page_h_px) > max_svg_px:
-        # Compute shape bounding box
-        all_shapes = list(shapes)
-        if bg_shapes:
-            all_shapes.extend(bg_shapes)
-        if all_shapes:
-            min_x = min_y = float('inf')
-            max_x = max_y = float('-inf')
-            for s in all_shapes:
-                px = _safe_float(s.get("cells", {}).get("PinX", {}).get("V")) * _INCH_TO_PX
-                py = (page_h - _safe_float(s.get("cells", {}).get("PinY", {}).get("V"))) * _INCH_TO_PX
-                sw = abs(_safe_float(s.get("cells", {}).get("Width", {}).get("V"))) * _INCH_TO_PX
-                sh = abs(_safe_float(s.get("cells", {}).get("Height", {}).get("V"))) * _INCH_TO_PX
-                if px > 0 or py > 0:
-                    min_x = min(min_x, px - sw / 2)
-                    min_y = min(min_y, py - sh / 2)
-                    max_x = max(max_x, px + sw / 2)
-                    max_y = max(max_y, py + sh / 2)
-            if min_x < float('inf'):
-                # Add 5% padding
-                pad_x = (max_x - min_x) * 0.05
-                pad_y = (max_y - min_y) * 0.05
-                vb_x = max(0, min_x - pad_x)
-                vb_y = max(0, min_y - pad_y)
-                vb_w = min(page_w_px, max_x - min_x + 2 * pad_x)
-                vb_h = min(page_h_px, max_y - min_y + 2 * pad_y)
+    all_shapes = list(shapes)
+    if bg_shapes:
+        all_shapes.extend(bg_shapes)
+    if all_shapes:
+        min_x = min_y = float('inf')
+        max_x = max_y = float('-inf')
+        for s in all_shapes:
+            px = _safe_float(s.get("cells", {}).get("PinX", {}).get("V")) * _INCH_TO_PX
+            py = (page_h - _safe_float(s.get("cells", {}).get("PinY", {}).get("V"))) * _INCH_TO_PX
+            sw = abs(_safe_float(s.get("cells", {}).get("Width", {}).get("V"))) * _INCH_TO_PX
+            sh = abs(_safe_float(s.get("cells", {}).get("Height", {}).get("V"))) * _INCH_TO_PX
+            if px > 0 or py > 0:
+                min_x = min(min_x, px - sw / 2)
+                min_y = min(min_y, py - sh / 2)
+                max_x = max(max_x, px + sw / 2)
+                max_y = max(max_y, py + sh / 2)
+            # Also account for text below shapes (TxtPinY < 0)
+            txt_pin_y = _safe_float(s.get("cells", {}).get("TxtPinY", {}).get("V"))
+            if txt_pin_y < 0:
+                # Text extends below shape
+                text_below = abs(txt_pin_y) * _INCH_TO_PX + 20  # font estimate
+                max_y = max(max_y, py + sh / 2 + text_below)
+        if min_x < float('inf'):
+            # Add padding — 3% or at least 20px
+            content_w = max_x - min_x
+            content_h = max_y - min_y
+            pad_x = max(20, content_w * 0.03)
+            pad_y = max(20, content_h * 0.03)
+            # Use content bounds but don't shrink below page if content fills it
+            vb_x = min(0, min_x - pad_x)
+            vb_y = min(0, min_y - pad_y)
+            vb_w = max(content_w + 2 * pad_x, page_w_px) if content_w > page_w_px * 0.8 else max(content_w + 2 * pad_x, page_w_px * 0.5)
+            vb_h = max(content_h + 2 * pad_y, page_h_px) if content_h > page_h_px * 0.8 else max(content_h + 2 * pad_y, page_h_px * 0.5)
+            # Ensure viewBox covers from vb_x to max content + padding
+            vb_w = max(vb_w, max_x + pad_x - vb_x)
+            vb_h = max(vb_h, max_y + pad_y - vb_y)
 
     # Cap display pixel size
     display_w = vb_w
