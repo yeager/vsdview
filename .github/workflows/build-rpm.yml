@@ -1,6 +1,7 @@
 name: Build .rpm
 
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
 
@@ -9,7 +10,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on:
+  workflow_dispatch: ubuntu-latest
     container: fedora:latest
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +52,8 @@ jobs:
           # Write spec
           cat > ~/rpmbuild/SPECS/vsdview.spec << SPECEOF
           Name:           vsdview
-          Version:        $VERSION
+          Version:
+  workflow_dispatch:        $VERSION
           Release:        1
           Summary:        Read-only viewer for Microsoft Visio files
           License:        GPL-3.0-or-later
