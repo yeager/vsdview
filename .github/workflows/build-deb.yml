@@ -1,102 +1,81 @@
 name: Build .deb
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
-  push:
-    tags: ['v*']
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on:
-  workflow_dispatch: ubuntu-latest
+  build-deb:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: sudo apt-get install -y gettext dpkg-dev
-
-      - name: Pull translations
-        env:
-          TX_TOKEN: ${{ secrets.TX_TOKEN }}
+      - name: Get version
+        id: version
         run: |
-          curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash
-          sudo mv tx /usr/local/bin/
-          tx pull -a --force --minimum-perc 10 || true
+          VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VER" >> $GITHUB_OUTPUT
 
-      - name: Compile translations
-        run: |
-          for po in po/*.po; do
-            [ -f "$po" ] || continue
-            lang=$(basename "$po" .po)
-            mkdir -p locale/$lang/LC_MESSAGES
-            msgfmt -o locale/$lang/LC_MESSAGES/vsdview.mo "$po"
-          done
+      - name: Install tools
+        run: sudo apt-get install -y gettext
 
       - name: Build .deb
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          PKG=$(mktemp -d)
-          mkdir -p $PKG/usr/lib/python3/dist-packages/vsdview
-          mkdir -p $PKG/usr/bin
-          mkdir -p $PKG/usr/share/applications
-          mkdir -p $PKG/usr/share/mime/packages
-          mkdir -p $PKG/usr/share/metainfo
-          mkdir -p $PKG/DEBIAN
+          PKG="vsdview"
+          PYNAME="vsdview"
+          VER="${{ steps.version.outputs.version }}"
+          ROOT=pkg-deb/${PKG}_${VER}-1_all
+          mkdir -p ${ROOT}/DEBIAN
+          mkdir -p ${ROOT}/usr/lib/python3/dist-packages/${PYNAME}
+          mkdir -p ${ROOT}/usr/bin
+          mkdir -p ${ROOT}/usr/share/${PKG}/locale
+          mkdir -p ${ROOT}/usr/share/applications
+          mkdir -p ${ROOT}/usr/share/metainfo
+          mkdir -p ${ROOT}/usr/share/icons/hicolor/scalable/apps
 
-          cp vsdview/*.py $PKG/usr/lib/python3/dist-packages/vsdview/
+          # Python package
+          if [ -d "src/${PYNAME}" ]; then
+            cp -r src/${PYNAME}/* ${ROOT}/usr/lib/python3/dist-packages/${PYNAME}/
+          elif [ -d "${PYNAME}" ]; then
+            cp -r ${PYNAME}/* ${ROOT}/usr/lib/python3/dist-packages/${PYNAME}/
+          fi
 
-          for mo in locale/*/LC_MESSAGES/vsdview.mo; do
-            [ -f "$mo" ] || continue
-            lang=$(echo "$mo" | cut -d/ -f2)
-            mkdir -p $PKG/usr/share/locale/$lang/LC_MESSAGES
-            cp "$mo" $PKG/usr/share/locale/$lang/LC_MESSAGES/
+          # Launcher script
+          printf '#!/usr/bin/python3\nimport sys\nfrom vsdview.main import main\nsys.exit(main())\n' > ${ROOT}/usr/bin/${PKG}
+          chmod 755 ${ROOT}/usr/bin/${PKG}
+
+          # Desktop + metainfo + icons
+          for f in data/*.desktop io.github.yeager.*.desktop ${PKG}.desktop; do
+            [ -f "$f" ] && cp "$f" ${ROOT}/usr/share/applications/
+          done
+          for f in data/*.metainfo.xml io.github.yeager.*.metainfo.xml; do
+            [ -f "$f" ] && cp "$f" ${ROOT}/usr/share/metainfo/
+          done
+          find data/icons -name "*.svg" -exec cp {} ${ROOT}/usr/share/icons/hicolor/scalable/apps/ \; 2>/dev/null || true
+
+          # Translations
+          for po in po/*.po; do
+            [ -f "$po" ] || continue
+            lang=$(basename "$po" .po)
+            mkdir -p ${ROOT}/usr/share/${PKG}/locale/${lang}/LC_MESSAGES
+            msgfmt -o ${ROOT}/usr/share/${PKG}/locale/${lang}/LC_MESSAGES/${PKG}.mo "$po"
           done
 
-          # Icon
-          mkdir -p $PKG/usr/share/icons/hicolor/scalable/apps
-          cp data/icons/hicolor/scalable/apps/org.nylander.vsdview.svg $PKG/usr/share/icons/hicolor/scalable/apps/
+          # DEBIAN/control
+          printf 'Package: %s\nVersion: %s-1\nArchitecture: all\nMaintainer: Daniel Nylander <daniel@danielnylander.se>\nDepends: python3 (>= 3.9), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1\nSection: utils\nPriority: optional\nHomepage: https://github.com/yeager/vsdview\nDescription: Visio file viewer for Linux\n' "${PKG}" "${VER}" > ${ROOT}/DEBIAN/control
 
-          # Desktop + MIME + metainfo
-          cp data/org.nylander.vsdview.desktop $PKG/usr/share/applications/
-          cp data/org.nylander.vsdview.mime.xml $PKG/usr/share/mime/packages/
-          cp data/org.nylander.vsdview.metainfo.xml $PKG/usr/share/metainfo/
+          dpkg-deb --build --root-owner-group ${ROOT}
+          mv pkg-deb/*.deb .
 
-          printf '#!/usr/bin/env python3\nfrom vsdview.__main__ import main\nmain()\n' > $PKG/usr/bin/vsdview
-          chmod +x $PKG/usr/bin/vsdview
-
-          cat > $PKG/DEBIAN/control << EOF
-          Package: vsdview
-          Version:
-  workflow_dispatch: ${VERSION}-1
-          Section:
-  workflow_dispatch: graphics
-          Priority: optional
-          Architecture: all
-          Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-rsvg-2.0
-          Recommends: libvisio-tools
-          Maintainer: Daniel Nylander <daniel@danielnylander.se>
-          Homepage: https://github.com/yeager/vsdview
-          Description:
-  workflow_dispatch: Read-only viewer for Microsoft Visio files
-           VSDView is a minimal viewer for .vsdx and .vsd files, built with
-           GTK4 and libadwaita. Uses a built-in .vsdx parser with optional
-           libvisio support for legacy .vsd files.
-          EOF
-          sed -i 's/^          //' $PKG/DEBIAN/control
-
-          dpkg-deb --root-owner-group --build $PKG vsdview_${VERSION}-1_all.deb
-
-      - name: Upload to release
+      - name: Upload .deb to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          gh release create $GITHUB_REF_NAME vsdview_${VERSION}-1_all.deb \
-            --title "v${VERSION}" \
-            --notes "Release v${VERSION}" \
-            --repo yeager/vsdview || \
-          gh release upload $GITHUB_REF_NAME vsdview_${VERSION}-1_all.deb \
-            --clobber --repo yeager/vsdview
+          VER="${{ steps.version.outputs.version }}"
+          DEB="vsdview_${VER}-1_all.deb"
+          gh release upload "v${VER}" "$DEB" --clobber 2>/dev/null || \
+          gh release upload "${GITHUB_REF_NAME}" "$DEB" --clobber 2>/dev/null || true
