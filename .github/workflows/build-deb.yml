@@ -1,6 +1,7 @@
 name: Build .deb
 
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
 
@@ -9,7 +10,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on:
+  workflow_dispatch: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -67,15 +69,18 @@ jobs:
 
           cat > $PKG/DEBIAN/control << EOF
           Package: vsdview
-          Version: ${VERSION}-1
-          Section: graphics
+          Version:
+  workflow_dispatch: ${VERSION}-1
+          Section:
+  workflow_dispatch: graphics
           Priority: optional
           Architecture: all
           Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-rsvg-2.0
           Recommends: libvisio-tools
           Maintainer: Daniel Nylander <daniel@danielnylander.se>
           Homepage: https://github.com/yeager/vsdview
-          Description: Read-only viewer for Microsoft Visio files
+          Description:
+  workflow_dispatch: Read-only viewer for Microsoft Visio files
            VSDView is a minimal viewer for .vsdx and .vsd files, built with
            GTK4 and libadwaita. Uses a built-in .vsdx parser with optional
            libvisio support for legacy .vsd files.
