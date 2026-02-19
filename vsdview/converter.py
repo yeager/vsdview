@@ -1157,6 +1157,18 @@ def _geometry_to_path(geo: dict, w: float, h: float,
     # Ensure path starts with M (MoveTo) — invalid paths crash renderers
     if result and not result.startswith("M"):
         result = f"M 0.00 0.00 {result}"
+    # Auto-close path if the last point is very close to the first MoveTo point
+    # This ensures proper fill rendering for closed shapes
+    if result and "Z" not in result and len(d_parts) >= 3:
+        first_m = re.match(r'M\s+([-+]?[\d.]+)\s+([-+]?[\d.]+)', result)
+        if first_m:
+            last_part = d_parts[-1]
+            last_coords = re.findall(r'([-+]?[\d.]+)', last_part)
+            if len(last_coords) >= 2:
+                sx_f, sy_f = float(first_m.group(1)), float(first_m.group(2))
+                ex_f, ey_f = float(last_coords[-2]), float(last_coords[-1])
+                if abs(sx_f - ex_f) < 0.5 and abs(sy_f - ey_f) < 0.5:
+                    result += " Z"
     return result
 
 
@@ -1273,20 +1285,26 @@ def _parse_nurbs_formula(e_val: str, cx: float, cy: float,
         px = vals[i]
         py = vals[i + 1]
         # knot = vals[i + 2], weight = vals[i + 3] — not used for simple approx
-        # Scale by sx/sy if coordinates are absolute
-        points.append((px * sx, py * sy))
-    # For cubic NURBS with 2 control points, interpolate as Bézier control points
-    # Map NURBS parameter space to Bézier: use control points as-is for approximation
-    # Scale from (cx,cy)→(ex,ey) using the NURBS control point positions
+        # When x_type/y_type=0, coords are fractions (0-1) — leave as-is
+        # When =1, coords are absolute inches — apply scaling
+        if x_type == 1:
+            px *= sx
+        if y_type == 1:
+            py *= sy
+        points.append((px, py))
+    # Map NURBS control points to absolute coordinates.
+    # When type=0 (fractional), the control points are fractions of the
+    # overall curve parameter space from start to end.
     result = []
     for px, py in points:
-        # Linear interpolation between start and end, offset by control point
-        bx = cx + (ex - cx) * px + (ey - cy) * (py - px) * 0.0  # simplified
-        by = cy + (ey - cy) * py + (ex - cx) * (px - py) * 0.0
-        # Actually for Visio NURBS quarter-circles, the control points are
-        # relative positions along the curve. Map them to absolute coords:
-        bx = cx + px * (ex - cx) if abs(ex - cx) > 1e-6 else cx + px * abs(ey - cy) * 0.5
-        by = cy + py * (ey - cy) if abs(ey - cy) > 1e-6 else cy + py * abs(ex - cx) * 0.5
+        if x_type == 0:
+            bx = cx + px * (ex - cx)
+        else:
+            bx = px  # already in absolute shape coords
+        if y_type == 0:
+            by = cy + py * (ey - cy)
+        else:
+            by = py  # already in absolute shape coords
         result.append((bx, by))
     return result
 
@@ -1338,9 +1356,14 @@ def _merge_shape_with_master(shape: dict, masters: dict,
     if not master_sd:
         return shape
 
-    # Merge cells: master provides defaults, local overrides
+    # Merge cells: master provides defaults, local overrides.
+    # Keep local cells that have either a value (V) or a formula (F),
+    # since F="Inh" with V="" means "inherit from master" while F="" with
+    # a concrete V means "override master".
     merged_cells = dict(master_sd.get("cells", {}))
-    merged_cells.update({k: v for k, v in shape["cells"].items() if v.get("V")})
+    for k, v in shape["cells"].items():
+        if v.get("V") or v.get("F"):
+            merged_cells[k] = v
     shape["cells"] = merged_cells
 
     # Merge geometry: use local if present, otherwise master.
@@ -1374,6 +1397,9 @@ def _merge_shape_with_master(shape: dict, masters: dict,
             local_by_section_ix = {g.get("ix", str(i)): g for i, g in enumerate(shape["geometry"])}
             merged_geos = []
             master_ixs_seen = set()
+            # Track whether the merged result uses master-space coordinates
+            # (needing scaling) or instance-space coordinates (no scaling).
+            needs_master_scaling = False
 
             for mi, master_geo in enumerate(master_geos):
                 mix = master_geo.get("ix", str(mi))
@@ -1393,6 +1419,7 @@ def _merge_shape_with_master(shape: dict, masters: dict,
                     if local_rows_by_ix and len(local_rows) < len(master_rows):
                         # Partial row override -- merge master rows with local overrides
                         merged_rows = []
+                        _has_master_only_rows = False
                         for mr in master_rows:
                             mrix = mr.get("ix", "")
                             if mrix and mrix in local_rows_by_ix:
@@ -1407,7 +1434,18 @@ def _merge_shape_with_master(shape: dict, masters: dict,
                                 merged_rows.append(merged_row)
                             else:
                                 merged_rows.append(mr)
+                                _has_master_only_rows = True
                         local_geo["rows"] = merged_rows
+                        # Only need master scaling if there are rows that came
+                        # entirely from master (in master coordinate space)
+                        if _has_master_only_rows:
+                            needs_master_scaling = True
+                    else:
+                        # Local has same or more rows than master — local
+                        # geometry values are already in instance coordinate
+                        # space (V values match instance Width/Height), so
+                        # no master-to-instance scaling is needed.
+                        pass
                     # Inherit NoFill/NoLine/NoShow from master if not set locally
                     for flag in ("no_fill", "no_line", "no_show"):
                         if not local_geo.get(flag) and master_geo.get(flag):
@@ -1416,6 +1454,7 @@ def _merge_shape_with_master(shape: dict, masters: dict,
                 else:
                     # Section not overridden locally -- use master section
                     merged_geos.append(master_geo)
+                    needs_master_scaling = True
 
             # Add any local-only sections (IX not in master)
             for lix, lg in local_by_section_ix.items():
@@ -1423,13 +1462,15 @@ def _merge_shape_with_master(shape: dict, masters: dict,
                     merged_geos.append(lg)
 
             shape["geometry"] = merged_geos
-            # Store master dims for coordinate scaling of inherited geometry
-            master_w_val = master_sd.get("cells", {}).get("Width", {}).get("V")
-            master_h_val = master_sd.get("cells", {}).get("Height", {}).get("V")
-            if master_w_val:
-                shape["_master_w"] = _safe_float(master_w_val)
-            if master_h_val:
-                shape["_master_h"] = _safe_float(master_h_val)
+            # Only store master dims for scaling when the merged geometry
+            # contains rows in master coordinate space (not instance space).
+            if needs_master_scaling:
+                master_w_val = master_sd.get("cells", {}).get("Width", {}).get("V")
+                master_h_val = master_sd.get("cells", {}).get("Height", {}).get("V")
+                if master_w_val:
+                    shape["_master_w"] = _safe_float(master_w_val)
+                if master_h_val:
+                    shape["_master_h"] = _safe_float(master_h_val)
 
     # Merge text: use local if present, otherwise master
     if not shape["text"] and not shape.get("_has_text_elem") and master_sd.get("text") and shape.get("type") != "Group":
@@ -1761,15 +1802,22 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         # Solid fill
         fill = fill_foregnd or fill_bkgnd or "none"
     elif 25 <= fill_pat_int <= 40:
-        # Gradient fill
-        start_color = fill_foregnd or "#FFFFFF"
-        end_color = fill_bkgnd or fill_foregnd or "#CCCCCC"
-        grad_dir = _get_cell_float(shape, "FillGradientDir")
-        # Map Visio gradient direction to angle
-        grad_angle = grad_dir * 45 if grad_dir else 0  # approximate
-        grad_id = f"grad_{shape['id']}_{fill_pat_int}"
-        gradients[grad_id] = {"start": start_color, "end": end_color, "dir": grad_angle}
-        fill = f"url(#{grad_id})"
+        # Gradient fill — Visio gradients go from FillBkgnd to FillForegnd
+        start_color = fill_bkgnd or "#FFFFFF"
+        end_color = fill_foregnd or fill_bkgnd or "#CCCCCC"
+        # If both colors are the same, use a solid fill instead of gradient
+        if start_color.upper() == end_color.upper():
+            fill = start_color
+        else:
+            # If both are the same or start is white, create a visible gradient
+            if start_color == end_color and end_color != "#FFFFFF":
+                start_color = _lighten_color(end_color, 0.7)
+            grad_dir = _get_cell_float(shape, "FillGradientDir")
+            # Map Visio gradient direction to angle
+            grad_angle = grad_dir * 45 if grad_dir else 0  # approximate
+            grad_id = f"grad_{shape['id']}_{fill_pat_int}"
+            gradients[grad_id] = {"start": start_color, "end": end_color, "dir": grad_angle}
+            fill = f"url(#{grad_id})"
     elif fill_pat_int >= 2:
         # Pattern/texture fill — approximate with blend
         if fill_bkgnd and not _is_black(fill_bkgnd):
@@ -1805,6 +1853,15 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
 
     dash_array = _get_dash_array(line_pattern, stroke_width)
 
+    # Fill opacity from FillForegndTrans (0=opaque, 1=transparent)
+    fill_trans = _get_cell_float(shape, "FillForegndTrans")
+    if fill_trans > 0 and fill_trans <= 1:
+        fill_opacity = 1.0 - fill_trans
+    elif fill_trans > 1:
+        fill_opacity = 1.0 - (fill_trans / 100.0)  # percentage
+    else:
+        fill_opacity = 1.0
+
     # Container style — ensure visibility but respect actual styles
     if is_container:
         if fill == "none" and not fill_foregnd:
@@ -1818,15 +1875,6 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             dash_array = "8,4"
         if stroke == "none":
             stroke = "#AAAAAA"
-
-    # Fill opacity from FillForegndTrans (0=opaque, 1=transparent)
-    fill_trans = _get_cell_float(shape, "FillForegndTrans")
-    if fill_trans > 0 and fill_trans <= 1:
-        fill_opacity = 1.0 - fill_trans
-    elif fill_trans > 1:
-        fill_opacity = 1.0 - (fill_trans / 100.0)  # percentage
-    else:
-        fill_opacity = 1.0
 
     # Line transparency
     line_trans = _get_cell_float(shape, "LineColorTrans")
@@ -1920,8 +1968,7 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 # Detect open paths: if start != end, don't fill
                 # (SVG auto-closes filled paths, creating visual artifacts)
                 if geo_fill != "none" and "Z" not in path_d:
-                    import re as _gre
-                    _coords = _gre.findall(r'[-+]?[\d.]+', path_d)
+                    _coords = re.findall(r'[-+]?[\d.]+', path_d)
                     if len(_coords) >= 4:
                         _sx, _sy = float(_coords[0]), float(_coords[1])
                         _ex, _ey = float(_coords[-2]), float(_coords[-1])
@@ -1985,6 +2032,26 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
     # --- Geometry rendering ---
     has_geometry = bool(shape["geometry"])
 
+    # If ALL geometry sections are NoShow, it's likely a conditional-visibility
+    # master (e.g., mind map Topic shapes). Force-show the last section that
+    # looks like a basic shape outline (has MoveTo + LineTo rows).
+    if has_geometry and all(g.get("no_show") for g in shape["geometry"]):
+        # Find the best fallback geometry section
+        _fallback_geo = None
+        for _fg in reversed(shape["geometry"]):
+            _row_types = {r["type"] for r in _fg.get("rows", [])}
+            if "MoveTo" in _row_types and ("LineTo" in _row_types or "ArcTo" in _row_types):
+                _fallback_geo = _fg
+                break
+        if _fallback_geo is None and shape["geometry"]:
+            # Use any section with rows
+            for _fg in reversed(shape["geometry"]):
+                if _fg.get("rows"):
+                    _fallback_geo = _fg
+                    break
+        if _fallback_geo:
+            _fallback_geo["no_show"] = False
+
     # For 1D connectors, use dedicated rendering even if they have master geometry
     is_connector = is_1d or obj_type == "2"
 
@@ -1998,13 +2065,16 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         ex_px = _safe_float(end_x) * _INCH_TO_PX
         ey_px = (page_h - _safe_float(end_y)) * _INCH_TO_PX
 
-        # Arrow markers — connectors (ObjType=2) default to EndArrow=4
-        # when no explicit arrow is set (Visio theme default)
+        # Arrow markers
         begin_arrow = int(_safe_float(_get_cell_val(shape, "BeginArrow", "0")))
         end_arrow = int(_safe_float(_get_cell_val(shape, "EndArrow", "0")))
-        if end_arrow == 0 and (obj_type == "2" or shape.get("master", "")):
-            # Default: filled triangle end arrow for connectors
-            end_arrow = 4
+        # Only default to an arrow if the shape is explicitly a connector
+        # (ObjType=2) AND has no EndArrow cell at all.  Shapes that explicitly
+        # set EndArrow=0 or inherit 0 from their master should stay arrowless.
+        if end_arrow == 0 and obj_type == "2":
+            _ea_cell = shape.get("cells", {}).get("EndArrow", {})
+            if not _ea_cell or (not _ea_cell.get("V") and not _ea_cell.get("F")):
+                end_arrow = 4
         begin_arrow_size = int(_safe_float(_get_cell_val(shape, "BeginArrowSize", "2")))
         end_arrow_size = int(_safe_float(_get_cell_val(shape, "EndArrowSize", "2")))
         marker_color = stroke.lstrip("#") if stroke != "none" else "333333"
@@ -2028,23 +2098,30 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             loc_pin_x = _get_cell_float(shape, "LocPinX")
             loc_pin_y = _get_cell_float(shape, "LocPinY")
             angle = _get_cell_float(shape, "Angle")
-            import math
             cos_a = math.cos(angle) if abs(angle) > 1e-6 else 1.0
             sin_a = math.sin(angle) if abs(angle) > 1e-6 else 0.0
 
             points = []
+            has_move_to = False
             for geo in shape["geometry"]:
                 if geo.get("no_show"):
                     continue
                 for row in geo["rows"]:
                     rt = row["type"]
                     cells = row["cells"]
-                    if rt in ("MoveTo", "LineTo", "ArcTo"):
+                    if rt in ("MoveTo", "LineTo", "ArcTo",
+                              "EllipticalArcTo", "NURBSTo",
+                              "SplineStart", "SplineKnot"):
                         x_val = cells.get("X", {}).get("V")
                         y_val = cells.get("Y", {}).get("V")
-                        # Only skip if values are truly absent (None or empty)
-                        if (x_val is None or x_val == "") and (y_val is None or y_val == ""):
+                        # Skip rows with incomplete coordinates — both X
+                        # and Y must be present for a valid connector point
+                        if not x_val and x_val != "0":
                             continue
+                        if not y_val and y_val != "0":
+                            continue
+                        if rt == "MoveTo":
+                            has_move_to = True
                         lx = _safe_float(x_val)
                         ly = _safe_float(y_val)
                         # Local to page: translate by pin offset
@@ -2056,6 +2133,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                         sx_px = px * _INCH_TO_PX
                         sy_px = (page_h - py) * _INCH_TO_PX
                         points.append((sx_px, sy_px))
+
+            # If geometry had no MoveTo, insert the begin point as start
+            if points and not has_move_to:
+                points.insert(0, (bx, by))
 
             if len(points) >= 2:
                 d_parts = [f"M {points[0][0]:.2f} {points[0][1]:.2f}"]
@@ -2454,8 +2535,8 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     if txt_width_px > 0 and font_size > 0:
         avg_char_w = font_size * 0.55
         max_chars = max(4, int(txt_width_px / avg_char_w))
-        # For very small shapes (< 40px wide), show abbreviated text
-        if txt_width_px < 40 and not is_container:
+        # For very small shapes (< 30px wide), show abbreviated text
+        if txt_width_px < 30 and not is_container:
             first_word = text_lines[0].split()[0] if text_lines and text_lines[0].split() else ""
             if first_word and len(first_word) > max_chars:
                 first_word = first_word[:max(2, max_chars - 1)] + "…"

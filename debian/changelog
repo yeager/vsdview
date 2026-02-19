@@ -1,3 +1,9 @@
+vsdview (0.4.0-1) unstable; urgency=low
+
+  * Rendering quality overhaul: fix geometry, connectors, themes, text
+
+ -- Daniel Nylander <daniel@danielnylander.se>  Wed, 19 Feb 2026 12:00:00 +0100
+
 vsdview (0.3.8-1) unstable; urgency=low
 
   * Initial release.
