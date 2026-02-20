@@ -45,7 +45,7 @@ jobs:
           fi
 
           # Launcher script
-          printf '#!/usr/bin/python3\nimport sys\nfrom vsdview.main import main\nsys.exit(main())\n' > ${ROOT}/usr/bin/${PKG}
+          printf '#!/usr/bin/python3\nimport sys\nfrom vsdview.__main__ import main\nsys.exit(main())\n' > ${ROOT}/usr/bin/${PKG}
           chmod 755 ${ROOT}/usr/bin/${PKG}
 
           # Desktop + metainfo + icons
