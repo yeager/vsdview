@@ -31,7 +31,7 @@ _ = gettext.gettext
 class VSDViewApplication(Adw.Application):
     def __init__(self):
         super().__init__(
-            application_id="org.nylander.vsdview",
+            application_id="se.danielnylander.vsdview",
             flags=Gio.ApplicationFlags.HANDLES_OPEN,
         )
         self.recent = RecentFiles()
@@ -207,7 +207,7 @@ class VSDViewApplication(Adw.Application):
         debug_info = self._build_debug_info()
         about = Adw.AboutDialog(
             application_name="VSDView",
-            application_icon="org.nylander.vsdview",
+            application_icon="se.danielnylander.vsdview",
             version=__version__,
             developer_name="Daniel Nylander",
             license_type=Gtk.License.GPL_3_0,

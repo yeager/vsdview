@@ -2,7 +2,7 @@
 Name=VSDView
 Comment=Read-only viewer for Microsoft Visio files
 Exec=vsdview %F
-Icon=org.nylander.vsdview
+Icon=se.danielnylander.vsdview
 Terminal=false
 Type=Application
 Categories=Graphics;Viewer;

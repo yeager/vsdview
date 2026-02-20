@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.nylander.vsdview</id>
+  <id>se.danielnylander.vsdview</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>VSDView</name>
@@ -26,10 +26,10 @@
   <url type="homepage">https://github.com/yeager/vsdview</url>
   <url type="bugtracker">https://github.com/yeager/vsdview/issues</url>
   <url type="translate">https://www.transifex.com/danielnylander/vsdview/</url>
-  <developer id="org.nylander">
+  <developer id="se.danielnylander">
     <name>Daniel Nylander</name>
   </developer>
-  <launchable type="desktop-id">org.nylander.vsdview.desktop</launchable>
+  <launchable type="desktop-id">se.danielnylander.vsdview.desktop</launchable>
   <provides>
     <binary>vsdview</binary>
     <mediatype>application/vnd.visio</mediatype>
@@ -45,6 +45,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.4.1" date="2026-02-20">
+      <description>
+        <p>Renamed application ID to se.danielnylander.vsdview for Flathub compatibility. Updated GNOME runtime to 48.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-02-20">
       <description>
         <p>Major rendering overhaul: geometry merge, improved connectors, gradients, text positioning, theme colors, stencil colors, swimlane text, and floorplan scaling.</p>
