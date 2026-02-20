@@ -17,3 +17,7 @@ dependencies = [
 
 [project.scripts]
 vsdview = "vsdview.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vsdview*"]
