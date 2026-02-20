@@ -7,16 +7,29 @@
   <summary>Read-only viewer for Microsoft Visio files</summary>
   <description>
     <p>
-      VSDView is a minimal viewer for Microsoft Visio files (.vsdx, .vsd, .vss),
-      built with GTK4 and libadwaita. It uses a built-in .vsdx parser with optional
-      libvisio support for legacy .vsd files.
+      VSDView is a lightweight viewer for Microsoft Visio files (.vsdx, .vsd, .vstx, .vss, .vssx),
+      built with GTK4 and libadwaita. It renders diagrams using a built-in .vsdx parser with
+      support for shapes, connectors, embedded images, gradients, text, stencils, themes, and
+      multi-page documents. Optional libvisio support for legacy .vsd files.
     </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Multi-page tab view</li>
+      <li>Text search (Ctrl+F)</li>
+      <li>PDF and text export</li>
+      <li>Canvas background toggle (system/light/dark)</li>
+      <li>Visio theme color support (DrawingML)</li>
+      <li>Layer visibility</li>
+      <li>Zoom-to-fit</li>
+    </ul>
   </description>
   <url type="homepage">https://github.com/yeager/vsdview</url>
   <url type="bugtracker">https://github.com/yeager/vsdview/issues</url>
+  <url type="translate">https://www.transifex.com/danielnylander/vsdview/</url>
   <developer id="org.nylander">
     <name>Daniel Nylander</name>
   </developer>
+  <launchable type="desktop-id">org.nylander.vsdview.desktop</launchable>
   <provides>
     <binary>vsdview</binary>
     <mediatype>application/vnd.visio</mediatype>
@@ -25,5 +38,29 @@
     <mediatype>application/vnd.ms-visio.template.main+xml</mediatype>
     <mediatype>application/vnd.ms-visio.drawing</mediatype>
   </provides>
+  <screenshots>
+    <screenshot type="default">
+      <caption>VSDView showing an Azure network architecture diagram</caption>
+      <image>https://raw.githubusercontent.com/yeager/vsdview/main/screenshots/main.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.4.0" date="2026-02-20">
+      <description>
+        <p>Major rendering overhaul: geometry merge, improved connectors, gradients, text positioning, theme colors, stencil colors, swimlane text, and floorplan scaling.</p>
+      </description>
+    </release>
+  </releases>
   <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Graphics</category>
+    <category>Viewer</category>
+  </categories>
+  <keywords>
+    <keyword>visio</keyword>
+    <keyword>vsdx</keyword>
+    <keyword>vsd</keyword>
+    <keyword>diagram</keyword>
+    <keyword>viewer</keyword>
+  </keywords>
 </component>
