@@ -2130,6 +2130,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
             pin_y = _get_cell_float(shape, "PinY")
             loc_pin_x = _get_cell_float(shape, "LocPinX")
             loc_pin_y = _get_cell_float(shape, "LocPinY")
+            # For 1D connectors without PinX, use BeginX as origin
+            if pin_x == 0 and "PinX" not in shape.get("cells", {}):
+                pin_x = _safe_float(begin_x)
+                pin_y = _safe_float(begin_y)
             angle = _get_cell_float(shape, "Angle")
             cos_a = math.cos(angle) if abs(angle) > 1e-6 else 1.0
             sin_a = math.sin(angle) if abs(angle) > 1e-6 else 0.0
