@@ -971,7 +971,7 @@ def _geometry_to_path(geo: dict, w: float, h: float,
     d_parts = []
     cx, cy = 0.0, 0.0  # Current point (inches)
 
-    for row in geo["rows"]:
+    for _row_idx, row in enumerate(geo["rows"]):
         rt = row["type"]
         cells = row["cells"]
 
@@ -1001,8 +1001,8 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
             # Detect oval: MoveTo followed by all ArcTo with nonzero bulge
-            remaining = rows[ri + 1:]
-            remaining_types = [r.get("T", r.get("type", "")) for r in remaining if r.get("T", r.get("type", ""))]
+            remaining = geo["rows"][_row_idx + 1:]
+            remaining_types = [r.get("type", "") for r in remaining if r.get("type", "")]
             if len(remaining_types) >= 3 and all(t == "ArcTo" for t in remaining_types[:len(remaining_types)]):
                 # Collect all ArcTo endpoints
                 arc_points = [(x, y)]
@@ -1010,10 +1010,9 @@ def _geometry_to_path(geo: dict, w: float, h: float,
                     art = ar.get("T", ar.get("type", ""))
                     if art != "ArcTo":
                         break
-                    ac = ar.get("cells", ar)
-                    ax = _safe_float(ac.get("X", {}).get("V") if isinstance(ac.get("X"), dict) else ac.get("X")) * sx
-                    ay = _safe_float(ac.get("Y", {}).get("V") if isinstance(ac.get("Y"), dict) else ac.get("Y")) * sy
-                    ab = _safe_float(ac.get("A", {}).get("V") if isinstance(ac.get("A"), dict) else ac.get("A"))
+                    ac = ar.get("cells", {})
+                    ax = _safe_float(ac.get("X", {}).get("V")) * sx
+                    ay = _safe_float(ac.get("Y", {}).get("V")) * sy
                     arc_points.append((ax, ay))
                 # Check if it closes back to start and has enough arcs for an oval
                 if len(arc_points) >= 4:
