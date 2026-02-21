@@ -2366,10 +2366,15 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     # Text position
     pin_x = _get_cell_float(shape, "PinX") * _INCH_TO_PX
     pin_y = (page_h - _get_cell_float(shape, "PinY")) * _INCH_TO_PX
-    loc_pin_x = _get_cell_float(shape, "LocPinX") * _INCH_TO_PX
-    loc_pin_y = _get_cell_float(shape, "LocPinY") * _INCH_TO_PX
     w_inch = _get_cell_float(shape, "Width")
     h_inch = _get_cell_float(shape, "Height")
+    loc_pin_x = _get_cell_float(shape, "LocPinX") * _INCH_TO_PX
+    loc_pin_y = _get_cell_float(shape, "LocPinY") * _INCH_TO_PX
+    # Default LocPin to center of shape when not explicitly set
+    if loc_pin_x == 0 and "LocPinX" not in shape.get("cells", {}):
+        loc_pin_x = abs(w_inch) * 0.5 * _INCH_TO_PX
+    if loc_pin_y == 0 and "LocPinY" not in shape.get("cells", {}):
+        loc_pin_y = abs(h_inch) * 0.5 * _INCH_TO_PX
 
     # Detect 1D connector shapes - offset text above the line
     _is_1d_shape = bool(_get_cell_val(shape, "BeginX") and _get_cell_val(shape, "EndX"))
