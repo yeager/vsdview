@@ -1201,7 +1201,7 @@ def _append_arc(d_parts: list, cx: float, cy: float, x: float, y: float,
 
     # Determine sweep direction
     large_arc = 1 if sagitta > chord / 2 else 0
-    sweep = 0 if bulge > 0 else 1
+    sweep = 1 if bulge > 0 else 0
 
     d_parts.append(
         f"A {radius_px:.2f} {radius_px:.2f} 0 {large_arc} {sweep} "
