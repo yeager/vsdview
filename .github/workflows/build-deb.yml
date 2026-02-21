@@ -61,8 +61,8 @@ jobs:
           for po in po/*.po; do
             [ -f "$po" ] || continue
             lang=$(basename "$po" .po)
-            mkdir -p ${ROOT}/usr/share/${PKG}/locale/${lang}/LC_MESSAGES
-            msgfmt -o ${ROOT}/usr/share/${PKG}/locale/${lang}/LC_MESSAGES/${PKG}.mo "$po"
+            mkdir -p ${ROOT}/usr/share/locale/${lang}/LC_MESSAGES
+            msgfmt -o ${ROOT}/usr/share/locale/${lang}/LC_MESSAGES/${PKG}.mo "$po"
           done
 
           # DEBIAN/control
