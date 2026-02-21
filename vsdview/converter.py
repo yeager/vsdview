@@ -1000,6 +1000,40 @@ def _geometry_to_path(geo: dict, w: float, h: float,
             y = _safe_float(cells.get("Y", {}).get("V")) * sy
             d_parts.append(f"M {x * _INCH_TO_PX:.2f} {(abs_h - y) * _INCH_TO_PX:.2f}")
             cx, cy = x, y
+            # Detect oval: MoveTo followed by all ArcTo with nonzero bulge
+            remaining = rows[ri + 1:]
+            remaining_types = [r.get("T", r.get("type", "")) for r in remaining if r.get("T", r.get("type", ""))]
+            if len(remaining_types) >= 3 and all(t == "ArcTo" for t in remaining_types[:len(remaining_types)]):
+                # Collect all ArcTo endpoints
+                arc_points = [(x, y)]
+                for ar in remaining:
+                    art = ar.get("T", ar.get("type", ""))
+                    if art != "ArcTo":
+                        break
+                    ac = ar.get("cells", ar)
+                    ax = _safe_float(ac.get("X", {}).get("V") if isinstance(ac.get("X"), dict) else ac.get("X")) * sx
+                    ay = _safe_float(ac.get("Y", {}).get("V") if isinstance(ac.get("Y"), dict) else ac.get("Y")) * sy
+                    ab = _safe_float(ac.get("A", {}).get("V") if isinstance(ac.get("A"), dict) else ac.get("A"))
+                    arc_points.append((ax, ay))
+                # Check if it closes back to start and has enough arcs for an oval
+                if len(arc_points) >= 4:
+                    first = arc_points[0]
+                    last = arc_points[-1]
+                    dist = ((first[0]-last[0])**2 + (first[1]-last[1])**2)**0.5
+                    if dist < 0.01:  # Closed shape
+                        all_x = [p[0] for p in arc_points]
+                        all_y = [p[1] for p in arc_points]
+                        ecx = (min(all_x) + max(all_x)) / 2 * _INCH_TO_PX
+                        ecy = (abs_h - (min(all_y) + max(all_y)) / 2) * _INCH_TO_PX
+                        erx = (max(all_x) - min(all_x)) / 2 * _INCH_TO_PX
+                        ery = (max(all_y) - min(all_y)) / 2 * _INCH_TO_PX
+                        if erx > 0.5 and ery > 0.5:
+                            d_parts.clear()
+                            d_parts.append(f"M {ecx - erx:.2f} {ecy:.2f}")
+                            d_parts.append(f"A {erx:.2f} {ery:.2f} 0 1 0 {ecx + erx:.2f} {ecy:.2f}")
+                            d_parts.append(f"A {erx:.2f} {ery:.2f} 0 1 0 {ecx - erx:.2f} {ecy:.2f}")
+                            d_parts.append("Z")
+                            break  # skip remaining geometry rows
 
         elif rt == "RelMoveTo":
             x = _safe_float(cells.get("X", {}).get("V"))
