@@ -1,6 +1,6 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the PACKAGE package.
+# This file is distributed under the same license as the vsdview package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 # 
 # Translators:
@@ -9,9 +9,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PACKAGE VERSION\n"
+"Project-Id-Version: vsdview\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-18 08:25+0100\n"
+"POT-Creation-Date: 2026-02-22 13:51+0100\n"
 "PO-Revision-Date: 2026-02-17 06:59+0000\n"
 "Last-Translator: Daniel Nylander <po@danielnylander.se>, 2026\n"
 "Language-Team: Swedish (https://app.transifex.com/danielnylander/teams/304899/sv/)\n"
@@ -21,61 +21,17 @@ msgstr ""
 "Language: sv\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: vsdview/converter.py:3176
-#, python-format
-msgid "Unsupported file format: %s"
-msgstr "Filformatet stöds inte: %s"
-
-#: vsdview/converter.py:3191
-#, python-format
-msgid ""
-"Cannot open %s files without libvisio. Install it:\n"
-"  Ubuntu/Debian: sudo apt install libvisio-tools\n"
-"  Fedora: sudo dnf install libvisio-tools\n"
-"  macOS: brew install libvisio"
-msgstr ""
-"Det går inte att öppna %s-filer utan libvisio. Installera det:\n"
-"  Ubuntu/Debian: sudo apt install libvisio-tools\n"
-"  Fedora: sudo dnf install libvisio-tools\n"
-"  macOS: brew install libvisio"
-
-#: vsdview/converter.py:3198
-msgid ""
-"Could not parse the Visio file. The file may be corrupt or unsupported.\n"
-"For best results, install libvisio-tools."
-msgstr ""
-"Det gick inte att tolka Visio-filen. Filen kan vara skadad eller stöds inte.\n"
-"För bästa resultat, installera libvisio-tools."
-
-#: vsdview/converter.py:3294
-msgid ""
-"Neither rsvg-convert nor cairosvg found. Install one:\n"
-"  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
-"  pip install cairosvg"
-msgstr ""
-"Varken rsvg-convert eller cairosvg hittades. Installera ett av dem:\n"
-"  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
-"  pip install cairosvg"
-
-#: vsdview/converter.py:3330
-msgid ""
-"cairosvg is required for PDF export. Install it:\n"
-"  pip install cairosvg"
-msgstr ""
-"cairosvg krävs för PDF-export. Installera det:\n"
-"  pip install cairosvg"
-
 #: vsdview/window.py:36
 msgid "Canvas: System theme"
-msgstr ""
+msgstr "Bakgrund: Systemtema"
 
 #: vsdview/window.py:37
 msgid "Canvas: Light background"
-msgstr ""
+msgstr "Bakgrund: Ljus bakgrund"
 
 #: vsdview/window.py:38
 msgid "Canvas: Dark background"
-msgstr ""
+msgstr "Bakgrund: Mörk bakgrund"
 
 #: vsdview/window.py:93
 msgid "Open Visio file"
@@ -123,7 +79,7 @@ msgstr "Mörkt"
 
 #: vsdview/window.py:128
 msgid "Canvas Background"
-msgstr ""
+msgstr "Bakgrund"
 
 #: vsdview/window.py:139
 msgid "Keyboard Shortcuts"
@@ -174,11 +130,55 @@ msgstr "Fel"
 msgid "OK"
 msgstr "OK"
 
-#: vsdview/app.py:220
+#: vsdview/converter.py:3799
+#, python-format
+msgid "Unsupported file format: %s"
+msgstr "Filformatet stöds inte: %s"
+
+#: vsdview/converter.py:3814
+#, python-format
+msgid ""
+"Cannot open %s files without libvisio. Install it:\n"
+"  Ubuntu/Debian: sudo apt install libvisio-tools\n"
+"  Fedora: sudo dnf install libvisio-tools\n"
+"  macOS: brew install libvisio"
+msgstr ""
+"Det går inte att öppna %s-filer utan libvisio. Installera det:\n"
+"  Ubuntu/Debian: sudo apt install libvisio-tools\n"
+"  Fedora: sudo dnf install libvisio-tools\n"
+"  macOS: brew install libvisio"
+
+#: vsdview/converter.py:3821
+msgid ""
+"Could not parse the Visio file. The file may be corrupt or unsupported.\n"
+"For best results, install libvisio-tools."
+msgstr ""
+"Det gick inte att tolka Visio-filen. Filen kan vara skadad eller stöds inte.\n"
+"För bästa resultat, installera libvisio-tools."
+
+#: vsdview/converter.py:3918
+msgid ""
+"Neither rsvg-convert nor cairosvg found. Install one:\n"
+"  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
+"  pip install cairosvg"
+msgstr ""
+"Varken rsvg-convert eller cairosvg hittades. Installera ett av dem:\n"
+"  Ubuntu/Debian: sudo apt install librsvg2-bin\n"
+"  pip install cairosvg"
+
+#: vsdview/converter.py:3954
+msgid ""
+"cairosvg is required for PDF export. Install it:\n"
+"  pip install cairosvg"
+msgstr ""
+"cairosvg krävs för PDF-export. Installera det:\n"
+"  pip install cairosvg"
+
+#: vsdview/app.py:245
 msgid "Translate this app: https://www.transifex.com/danielnylander/vsdview/"
 msgstr "Översätt denna app: https://www.transifex.com/danielnylander/vsdview/"
 
-#: vsdview/app.py:221
+#: vsdview/app.py:246
 msgid ""
 "Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
 "is not affiliated with or endorsed by Microsoft."
@@ -186,6 +186,34 @@ msgstr ""
 "Microsoft Visio är ett registrerat varumärke som tillhör Microsoft "
 "Corporation. VSDView är inte anslutet till eller godkänt av Microsoft."
 
-#: vsdview/app.py:233
+#: vsdview/app.py:258
 msgid "not found"
 msgstr "hittades inte"
+
+#: vsdview/app.py:272
+msgid "Welcome"
+msgstr "Välkommen"
+
+#: vsdview/app.py:277
+msgid "Welcome to VSDView"
+msgstr "Välkommen till VSDView"
+
+#: vsdview/app.py:278
+msgid ""
+"View Microsoft Visio files on Linux.\n"
+"\n"
+"✓ Open .vsd and .vsdx files\n"
+"✓ Multi-page tabs\n"
+"✓ Text search and copy\n"
+"✓ PDF export"
+msgstr ""
+"Visa Microsoft Visio-filer på Linux.\n"
+"\n"
+"✓ Öppna .vsd- och .vsdx-filer\n"
+"✓ Flersidiga flikar\n"
+"✓ Textsökning och kopiering\n"
+"✓ PDF-export"
+
+#: vsdview/app.py:279
+msgid "Get Started"
+msgstr "Kom igång"
