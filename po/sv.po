@@ -11,7 +11,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: vsdview\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-22 13:51+0100\n"
+"POT-Creation-Date: 2026-02-22 17:04+0100\n"
 "PO-Revision-Date: 2026-02-17 06:59+0000\n"
 "Last-Translator: Daniel Nylander <po@danielnylander.se>, 2026\n"
 "Language-Team: Swedish (https://app.transifex.com/danielnylander/teams/304899/sv/)\n"
@@ -21,114 +21,49 @@ msgstr ""
 "Language: sv\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: vsdview/window.py:36
-msgid "Canvas: System theme"
-msgstr "Bakgrund: Systemtema"
+#: vsdview/app.py:245
+msgid "Translate this app: https://www.transifex.com/danielnylander/vsdview/"
+msgstr "Översätt denna app: https://www.transifex.com/danielnylander/vsdview/"
 
-#: vsdview/window.py:37
-msgid "Canvas: Light background"
-msgstr "Bakgrund: Ljus bakgrund"
+#: vsdview/app.py:246
+msgid ""
+"Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
+"is not affiliated with or endorsed by Microsoft."
+msgstr ""
+"Microsoft Visio är ett registrerat varumärke som tillhör Microsoft "
+"Corporation. VSDView är inte anslutet till eller godkänt av Microsoft."
 
-#: vsdview/window.py:38
-msgid "Canvas: Dark background"
-msgstr "Bakgrund: Mörk bakgrund"
+#: vsdview/app.py:258
+msgid "not found"
+msgstr "hittades inte"
 
-#: vsdview/window.py:93
-msgid "Open Visio file"
-msgstr "Öppna Visio-fil"
+#: vsdview/app.py:272
+msgid "Welcome"
+msgstr "Välkommen"
 
-#: vsdview/window.py:99
-msgid "Find text"
-msgstr "Hitta text"
+#: vsdview/app.py:277
+msgid "Welcome to VSDView"
+msgstr "Välkommen till VSDView"
 
-#: vsdview/window.py:114
-msgid "Recent Files"
-msgstr "Senaste filer"
+#: vsdview/app.py:278
+msgid ""
+"View Microsoft Visio files on Linux.\n"
+"\n"
+"✓ Open .vsd and .vsdx files\n"
+"✓ Multi-page tabs\n"
+"✓ Text search and copy\n"
+"✓ PDF export"
+msgstr ""
+"Visa Microsoft Visio-filer på Linux.\n"
+"\n"
+"✓ Öppna .vsd- och .vsdx-filer\n"
+"✓ Flersidiga flikar\n"
+"✓ Textsökning och kopiering\n"
+"✓ PDF-export"
 
-#: vsdview/window.py:117 vsdview/window.py:227
-msgid "Export as PNG"
-msgstr "Exportera som PNG"
-
-#: vsdview/window.py:118 vsdview/window.py:228
-msgid "Export as PDF"
-msgstr "Exportera som PDF"
-
-#: vsdview/window.py:119 vsdview/window.py:229
-msgid "Export as Text"
-msgstr "Exportera som text"
-
-#: vsdview/window.py:120
-msgid "Export"
-msgstr "Exportera"
-
-#: vsdview/window.py:122 vsdview/window.py:226
-msgid "Copy Text"
-msgstr "Kopiera text"
-
-#: vsdview/window.py:125
-msgid "System"
-msgstr "System"
-
-#: vsdview/window.py:126
-msgid "Light"
-msgstr "Ljust"
-
-#: vsdview/window.py:127
-msgid "Dark"
-msgstr "Mörkt"
-
-#: vsdview/window.py:128
-msgid "Canvas Background"
-msgstr "Bakgrund"
-
-#: vsdview/window.py:139
-msgid "Keyboard Shortcuts"
-msgstr "Tangentbordsgenvägar"
-
-#: vsdview/window.py:140
-msgid "About"
-msgstr "Om"
-
-#: vsdview/window.py:141
-msgid "Quit"
-msgstr "Avsluta"
-
-#: vsdview/window.py:197 vsdview/window.py:325
-msgid "No file loaded"
-msgstr "Ingen fil inläst"
-
-#: vsdview/window.py:290
-#, python-format
-msgid "%d match(es) found"
-msgstr "%d träffar hittades"
-
-#: vsdview/window.py:322
-msgid "Page"
-msgstr "Sida"
-
-#: vsdview/window.py:330
-msgid "Visio files"
-msgstr "Visio-filer"
-
-#: vsdview/window.py:352
-msgid "Conversion failed"
-msgstr "Konvertering misslyckades"
-
-#: vsdview/window.py:357
-msgid "No SVG output produced."
-msgstr "Ingen SVG-utdata producerad."
-
-#: vsdview/window.py:455 vsdview/window.py:482 vsdview/window.py:573
-msgid "No file loaded to export."
-msgstr "Ingen fil inläst för export."
-
-#: vsdview/window.py:632
-msgid "Error"
-msgstr "Fel"
-
-#: vsdview/window.py:635
-msgid "OK"
-msgstr "OK"
+#: vsdview/app.py:279
+msgid "Get Started"
+msgstr "Kom igång"
 
 #: vsdview/converter.py:3799
 #, python-format
@@ -174,46 +109,111 @@ msgstr ""
 "cairosvg krävs för PDF-export. Installera det:\n"
 "  pip install cairosvg"
 
-#: vsdview/app.py:245
-msgid "Translate this app: https://www.transifex.com/danielnylander/vsdview/"
-msgstr "Översätt denna app: https://www.transifex.com/danielnylander/vsdview/"
+#: vsdview/window.py:37
+msgid "Canvas: System theme"
+msgstr "Bakgrund: Systemtema"
 
-#: vsdview/app.py:246
-msgid ""
-"Microsoft Visio is a registered trademark of Microsoft Corporation. VSDView "
-"is not affiliated with or endorsed by Microsoft."
-msgstr ""
-"Microsoft Visio är ett registrerat varumärke som tillhör Microsoft "
-"Corporation. VSDView är inte anslutet till eller godkänt av Microsoft."
+#: vsdview/window.py:38
+msgid "Canvas: Light background"
+msgstr "Bakgrund: Ljus bakgrund"
 
-#: vsdview/app.py:258
-msgid "not found"
-msgstr "hittades inte"
+#: vsdview/window.py:39
+msgid "Canvas: Dark background"
+msgstr "Bakgrund: Mörk bakgrund"
 
-#: vsdview/app.py:272
-msgid "Welcome"
-msgstr "Välkommen"
+#: vsdview/window.py:94
+msgid "Open Visio file"
+msgstr "Öppna Visio-fil"
 
-#: vsdview/app.py:277
-msgid "Welcome to VSDView"
-msgstr "Välkommen till VSDView"
+#: vsdview/window.py:100
+msgid "Find text"
+msgstr "Hitta text"
 
-#: vsdview/app.py:278
-msgid ""
-"View Microsoft Visio files on Linux.\n"
-"\n"
-"✓ Open .vsd and .vsdx files\n"
-"✓ Multi-page tabs\n"
-"✓ Text search and copy\n"
-"✓ PDF export"
-msgstr ""
-"Visa Microsoft Visio-filer på Linux.\n"
-"\n"
-"✓ Öppna .vsd- och .vsdx-filer\n"
-"✓ Flersidiga flikar\n"
-"✓ Textsökning och kopiering\n"
-"✓ PDF-export"
+#: vsdview/window.py:115
+msgid "Recent Files"
+msgstr "Senaste filer"
 
-#: vsdview/app.py:279
-msgid "Get Started"
-msgstr "Kom igång"
+#: vsdview/window.py:118 vsdview/window.py:228
+msgid "Export as PNG"
+msgstr "Exportera som PNG"
+
+#: vsdview/window.py:119 vsdview/window.py:229
+msgid "Export as PDF"
+msgstr "Exportera som PDF"
+
+#: vsdview/window.py:120 vsdview/window.py:230
+msgid "Export as Text"
+msgstr "Exportera som text"
+
+#: vsdview/window.py:121
+msgid "Export"
+msgstr "Exportera"
+
+#: vsdview/window.py:123 vsdview/window.py:227
+msgid "Copy Text"
+msgstr "Kopiera text"
+
+#: vsdview/window.py:126
+msgid "System"
+msgstr "System"
+
+#: vsdview/window.py:127
+msgid "Light"
+msgstr "Ljust"
+
+#: vsdview/window.py:128
+msgid "Dark"
+msgstr "Mörkt"
+
+#: vsdview/window.py:129
+msgid "Canvas Background"
+msgstr "Bakgrund"
+
+#: vsdview/window.py:140
+msgid "Keyboard Shortcuts"
+msgstr "Tangentbordsgenvägar"
+
+#: vsdview/window.py:141
+msgid "About"
+msgstr "Om"
+
+#: vsdview/window.py:142
+msgid "Quit"
+msgstr "Avsluta"
+
+#: vsdview/window.py:198 vsdview/window.py:326
+msgid "No file loaded"
+msgstr "Ingen fil inläst"
+
+#: vsdview/window.py:291
+#, python-format
+msgid "%d match(es) found"
+msgstr "%d träffar hittades"
+
+#: vsdview/window.py:323
+msgid "Page"
+msgstr "Sida"
+
+#: vsdview/window.py:331
+msgid "Visio files"
+msgstr "Visio-filer"
+
+#: vsdview/window.py:353
+msgid "Conversion failed"
+msgstr "Konvertering misslyckades"
+
+#: vsdview/window.py:358
+msgid "No SVG output produced."
+msgstr "Ingen SVG-utdata producerad."
+
+#: vsdview/window.py:456 vsdview/window.py:483 vsdview/window.py:574
+msgid "No file loaded to export."
+msgstr "Ingen fil inläst för export."
+
+#: vsdview/window.py:633
+msgid "Error"
+msgstr "Fel"
+
+#: vsdview/window.py:636
+msgid "OK"
+msgstr "OK"
