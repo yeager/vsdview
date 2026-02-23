@@ -12,8 +12,8 @@ gi.require_version("Rsvg", "2.0")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Rsvg
 
-from vsdview.converter import (
 from vsdview.accessibility import AccessibilityManager
+from vsdview.converter import (
     ALL_EXTENSIONS,
     STENCIL_EXTENSIONS,
     convert_vsd_to_svg,

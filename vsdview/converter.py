@@ -664,20 +664,28 @@ def _gradient_defs(gradients: dict[str, dict]) -> list[str]:
         return []
     lines = []
     for gid, g in sorted(gradients.items()):
-        angle = g.get("dir", 0)
-        # Convert angle to x1,y1,x2,y2 for linearGradient
-        rad = math.radians(angle)
-        x1 = 50 - 50 * math.cos(rad)
-        y1 = 50 + 50 * math.sin(rad)
-        x2 = 50 + 50 * math.cos(rad)
-        y2 = 50 - 50 * math.sin(rad)
-        lines.append(
-            f'<linearGradient id="{gid}" '
-            f'x1="{x1:.1f}%" y1="{y1:.1f}%" x2="{x2:.1f}%" y2="{y2:.1f}%">'
-            f'<stop offset="0%" stop-color="{g["start"]}"/>'
-            f'<stop offset="100%" stop-color="{g["end"]}"/>'
-            f'</linearGradient>'
-        )
+        if g.get("radial"):
+            lines.append(
+                f'<radialGradient id="{gid}" cx="50%" cy="50%" r="50%">'
+                f'<stop offset="0%" stop-color="{g["start"]}"/>'
+                f'<stop offset="100%" stop-color="{g["end"]}"/>'
+                f'</radialGradient>'
+            )
+        else:
+            angle = g.get("dir", 0)
+            # Convert angle to x1,y1,x2,y2 for linearGradient
+            rad = math.radians(angle)
+            x1 = 50 - 50 * math.cos(rad)
+            y1 = 50 + 50 * math.sin(rad)
+            x2 = 50 + 50 * math.cos(rad)
+            y2 = 50 - 50 * math.sin(rad)
+            lines.append(
+                f'<linearGradient id="{gid}" '
+                f'x1="{x1:.1f}%" y1="{y1:.1f}%" x2="{x2:.1f}%" y2="{y2:.1f}%">'
+                f'<stop offset="0%" stop-color="{g["start"]}"/>'
+                f'<stop offset="100%" stop-color="{g["end"]}"/>'
+                f'</linearGradient>'
+            )
     return lines
 
 
@@ -1847,9 +1855,31 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 start_color = _lighten_color(end_color, 0.7)
             grad_dir = _get_cell_float(shape, "FillGradientDir")
             # Map Visio gradient direction to angle
-            grad_angle = grad_dir * 45 if grad_dir else 0  # approximate
+            if grad_dir:
+                grad_angle = grad_dir * 45
+            else:
+                # Map FillPattern to gradient direction when FillGradientDir
+                # is not set (classic Visio gradient patterns)
+                _pattern_angles = {
+                    25: 0,    # Linear left-to-right
+                    26: 90,   # Linear top-to-bottom
+                    27: 45,   # Diagonal top-left to bottom-right
+                    28: 315,  # Diagonal bottom-left to top-right
+                    29: 0,    # Linear from center (radial approx)
+                    30: 90,   # Vertical from center
+                    33: 0,    # Horizontal
+                    34: 90,   # Vertical
+                    35: 45,   # Diagonal
+                    36: 315,  # Reverse diagonal
+                    40: 0,    # Horizontal
+                }
+                grad_angle = _pattern_angles.get(fill_pat_int, 0)
             grad_id = f"grad_{shape['id']}_{fill_pat_int}"
-            gradients[grad_id] = {"start": start_color, "end": end_color, "dir": grad_angle}
+            is_radial = fill_pat_int in (29, 30, 31, 32, 37, 38, 39)
+            gradients[grad_id] = {
+                "start": start_color, "end": end_color,
+                "dir": grad_angle, "radial": is_radial
+            }
             fill = f"url(#{grad_id})"
     elif fill_pat_int >= 2:
         # Pattern/texture fill — approximate with blend
@@ -2013,6 +2043,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                     f'fill="{geo_fill}" stroke="{geo_stroke}" '
                     f'stroke-width="{stroke_width:.2f}"'
                 )
+                if fill_opacity < 0.99 and geo_fill != "none":
+                    geo_style += f' fill-opacity="{fill_opacity:.2f}"'
+                if stroke_opacity < 0.99 and geo_stroke != "none":
+                    geo_style += f' stroke-opacity="{stroke_opacity:.2f}"'
                 if dash_array:
                     geo_style += f' stroke-dasharray="{dash_array}"'
                 lines.append(f'<path d="{path_d}" {geo_style}{shadow_attr}/>')
@@ -2101,10 +2135,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
         # Arrow markers
         begin_arrow = int(_safe_float(_get_cell_val(shape, "BeginArrow", "0")))
         end_arrow = int(_safe_float(_get_cell_val(shape, "EndArrow", "0")))
-        # Only default to an arrow if the shape is explicitly a connector
-        # (ObjType=2) AND has no EndArrow cell at all.  Shapes that explicitly
-        # set EndArrow=0 or inherit 0 from their master should stay arrowless.
-        if end_arrow == 0 and obj_type == "2":
+        # Default to an arrow if the shape looks like a connector and has no
+        # EndArrow cell at all. Check ObjType=2 or name contains "connector".
+        _is_named_connector = "connector" in shape_name
+        if end_arrow == 0 and (obj_type == "2" or _is_named_connector):
             _ea_cell = shape.get("cells", {}).get("EndArrow", {})
             if not _ea_cell or (not _ea_cell.get("V") and not _ea_cell.get("F")):
                 end_arrow = 4
@@ -2224,6 +2258,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 f'fill="{geo_fill}" stroke="{geo_stroke}" '
                 f'stroke-width="{stroke_width:.2f}"'
             )
+            if fill_opacity < 0.99 and geo_fill != "none":
+                geo_style += f' fill-opacity="{fill_opacity:.2f}"'
+            if stroke_opacity < 0.99 and geo_stroke != "none":
+                geo_style += f' stroke-opacity="{stroke_opacity:.2f}"'
             if dash_array:
                 geo_style += f' stroke-dasharray="{dash_array}"'
 
@@ -2247,6 +2285,10 @@ def _render_shape_svg(shape: dict, page_h: float, masters: dict,
                 f'fill="{fallback_fill}" stroke="{fallback_stroke}" '
                 f'stroke-width="{max(stroke_width, 0.75):.2f}"'
             )
+            if fill_opacity < 0.99 and fallback_fill != "none":
+                fallback_style += f' fill-opacity="{fill_opacity:.2f}"'
+            if stroke_opacity < 0.99 and fallback_stroke != "none":
+                fallback_style += f' stroke-opacity="{stroke_opacity:.2f}"'
             if dash_array:
                 fallback_style += f' stroke-dasharray="{dash_array}"'
             lines.append(
@@ -2441,6 +2483,16 @@ def _append_text_svg(lines: list, shape: dict, page_h: float,
     halign = int(_safe_float(para_fmt.get("HorzAlign", "1")))
     anchor_map = {0: "start", 1: "middle", 2: "end"}
     text_anchor = anchor_map.get(halign, "middle")
+
+    # Adjust tx for non-center horizontal alignment
+    shape_left = pin_x - loc_pin_x
+    _text_pad = font_size * 0.4 if font_size > 0 else 4
+    if halign == 0:
+        # Left-aligned: position at left edge + padding
+        tx = shape_left + _text_pad
+    elif halign == 2:
+        # Right-aligned: position at right edge - padding
+        tx = shape_left + w_px - _text_pad
 
     # Vertical alignment (0=top, 1=middle, 2=bottom)
     vert_align = int(_safe_float(_get_cell_val(shape, "VerticalAlign", "1")))

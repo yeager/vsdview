@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+
+  <!-- Microsoft Visio Drawing (legacy binary) -->
+  <mime-type type="application/vnd.visio">
+    <comment>Microsoft Visio drawing</comment>
+    <comment xml:lang="sv">Microsoft Visio-ritning</comment>
+    <glob pattern="*.vsd"/>
+    <glob pattern="*.vdw"/>
+  </mime-type>
+
+  <!-- Microsoft Visio Drawing (Open XML) -->
+  <mime-type type="application/vnd.ms-visio.drawing.main+xml">
+    <comment>Microsoft Visio drawing (XML)</comment>
+    <comment xml:lang="sv">Microsoft Visio-ritning (XML)</comment>
+    <glob pattern="*.vsdx"/>
+    <glob pattern="*.vsdm"/>
+  </mime-type>
+
+  <!-- Microsoft Visio Stencil -->
+  <mime-type type="application/vnd.ms-visio.stencil.main+xml">
+    <comment>Microsoft Visio stencil</comment>
+    <comment xml:lang="sv">Microsoft Visio-stencil</comment>
+    <glob pattern="*.vssx"/>
+    <glob pattern="*.vssm"/>
+    <glob pattern="*.vss"/>
+  </mime-type>
+
+  <!-- Microsoft Visio Template -->
+  <mime-type type="application/vnd.ms-visio.template.main+xml">
+    <comment>Microsoft Visio template</comment>
+    <comment xml:lang="sv">Microsoft Visio-mall</comment>
+    <glob pattern="*.vstx"/>
+    <glob pattern="*.vstm"/>
+    <glob pattern="*.vst"/>
+  </mime-type>
+
+</mime-info>

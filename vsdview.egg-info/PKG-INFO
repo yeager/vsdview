@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: vsdview
+Version: 0.4.5
+Summary: A read-only viewer for Microsoft Visio files (.vsdx/.vsd)
+Author: Daniel Nylander
+License-Expression: GPL-3.0-or-later
+Requires-Python: >=3.10
+License-File: LICENSE
+Requires-Dist: PyGObject>=3.42
+Dynamic: license-file
