@@ -34,74 +34,8 @@ jobs:
             --transform "s,^,${PKG}-${VER}/," \
             $(ls -d src/vsdview vsdview po data pyproject.toml *.desktop *.metainfo.xml 2>/dev/null)
 
-          cat > ~/rpmbuild/SPECS/${PKG}.spec << 'SPECEOF'
-Name:           vsdview
-Version:        VERSIONPLACEHOLDER
-Release:        1%{?dist}
-Summary:        Read-only viewer for Microsoft Visio files
-License:        GPL-3.0-or-later
-URL:            https://github.com/yeager/vsdview
-Source0:        %{name}-%{version}.tar.gz
-BuildArch:      noarch
-Requires:       python3 >= 3.10
-Requires:       python3-gobject
-Requires:       gtk4
-Requires:       libadwaita
-Requires:       librsvg2
-Recommends:     librsvg2-tools
+          echo "TmFtZTogICAgICAgICAgIHZzZHZpZXcKVmVyc2lvbjogICAgICAgIFZFUlNJT05QTEFDRUhPTERFUgpSZWxlYXNlOiAgICAgICAgMQpTdW1tYXJ5OiAgICAgICAgUmVhZC1vbmx5IHZpZXdlciBmb3IgTWljcm9zb2Z0IFZpc2lvIGZpbGVzCkxpY2Vuc2U6ICAgICAgICBHUEwtMy4wLW9yLWxhdGVyClVSTDogICAgICAgICAgICBodHRwczovL2dpdGh1Yi5jb20veWVhZ2VyL3ZzZHZpZXcKU291cmNlMDogICAgICAgICV7bmFtZX0tJXt2ZXJzaW9ufS50YXIuZ3oKQnVpbGRBcmNoOiAgICAgIG5vYXJjaApSZXF1aXJlczogICAgICAgcHl0aG9uMyA+PSAzLjEwClJlcXVpcmVzOiAgICAgICBweXRob24zLWdvYmplY3QKUmVxdWlyZXM6ICAgICAgIGd0azQKUmVxdWlyZXM6ICAgICAgIGxpYmFkd2FpdGEKUmVxdWlyZXM6ICAgICAgIGxpYnJzdmcyClJlY29tbWVuZHM6ICAgICBsaWJyc3ZnMi10b29scwoKJWRlc2NyaXB0aW9uClZTRFZpZXcgaXMgYSByZWFkLW9ubHkgdmlld2VyIGZvciBNaWNyb3NvZnQgVmlzaW8gZmlsZXMgKC52c2R4IGFuZCAudnNkKS4KCiVwcmVwCiVzZXR1cCAtcQoKJWluc3RhbGwKUFlOQU1FPSJ2c2R2aWV3Igpta2RpciAtcCAle2J1aWxkcm9vdH0vdXNyL2xpYi9weXRob24zL2Rpc3QtcGFja2FnZXMvJFBZTkFNRQppZiBbIC1kICJzcmMvJFBZTkFNRSIgXTsgdGhlbgogIGNwIC1yIHNyYy8kUFlOQU1FLyogJXtidWlsZHJvb3R9L3Vzci9saWIvcHl0aG9uMy9kaXN0LXBhY2thZ2VzLyRQWU5BTUUvCmVsaWYgWyAtZCAiJFBZTkFNRSIgXTsgdGhlbgogIGNwIC1yICRQWU5BTUUvKiAle2J1aWxkcm9vdH0vdXNyL2xpYi9weXRob24zL2Rpc3QtcGFja2FnZXMvJFBZTkFNRS8KZmkKCm1rZGlyIC1wICV7YnVpbGRyb290fS91c3IvYmluCmNhdCA+ICV7YnVpbGRyb290fS91c3IvYmluLyV7bmFtZX0gPDwgJ0xBVU5DSEVSJwojIS91c3IvYmluL3B5dGhvbjMKaW1wb3J0IHN5cwpmcm9tIHZzZHZpZXcuX19tYWluX18gaW1wb3J0IG1haW4Kc3lzLmV4aXQobWFpbigpKQpMQVVOQ0hFUgpjaG1vZCA3NTUgJXtidWlsZHJvb3R9L3Vzci9iaW4vJXtuYW1lfQoKbWtkaXIgLXAgJXtidWlsZHJvb3R9L3Vzci9zaGFyZS9hcHBsaWNhdGlvbnMKbWtkaXIgLXAgJXtidWlsZHJvb3R9L3Vzci9zaGFyZS9tZXRhaW5mbwpta2RpciAtcCAle2J1aWxkcm9vdH0vdXNyL3NoYXJlL2ljb25zL2hpY29sb3Ivc2NhbGFibGUvYXBwcwpmb3IgZiBpbiBkYXRhLyouZGVza3RvcCAqLmRlc2t0b3A7IGRvCiAgWyAtZiAiJGYiIF0gJiYgaW5zdGFsbCAtbSA2NDQgIiRmIiAle2J1aWxkcm9vdH0vdXNyL3NoYXJlL2FwcGxpY2F0aW9ucy8KZG9uZQpmb3IgZiBpbiBkYXRhLyoubWV0YWluZm8ueG1sICoubWV0YWluZm8ueG1sOyBkbwogIFsgLWYgIiRmIiBdICYmIGluc3RhbGwgLW0gNjQ0ICIkZiIgJXtidWlsZHJvb3R9L3Vzci9zaGFyZS9tZXRhaW5mby8KZG9uZQpmaW5kIGRhdGEvaWNvbnMgLW5hbWUgIiouc3ZnIiAtcHJpbnQwIDI+L2Rldi9udWxsIHwgeGFyZ3MgLTAgLUl7fSBpbnN0YWxsIC1tIDY0NCB7fSAle2J1aWxkcm9vdH0vdXNyL3NoYXJlL2ljb25zL2hpY29sb3Ivc2NhbGFibGUvYXBwcy8gMj4vZGV2L251bGwgfHwgdHJ1ZQoKZm9yIHBvIGluIHBvLyoucG87IGRvCiAgWyAtZiAiJHBvIiBdIHx8IGNvbnRpbnVlCiAgbGFuZz0kKGJhc2VuYW1lICIkcG8iIC5wbykKICBta2RpciAtcCAle2J1aWxkcm9vdH0vdXNyL3NoYXJlL2xvY2FsZS8kbGFuZy9MQ19NRVNTQUdFUwogIG1zZ2ZtdCAtbyAle2J1aWxkcm9vdH0vdXNyL3NoYXJlL2xvY2FsZS8kbGFuZy9MQ19NRVNTQUdFUy8le25hbWV9Lm1vICIkcG8iCmRvbmUKCiVmaWxlcwovdXNyL2Jpbi8le25hbWV9Ci91c3IvbGliL3B5dGhvbjMvZGlzdC1wYWNrYWdlcy92c2R2aWV3LwovdXNyL3NoYXJlL2FwcGxpY2F0aW9ucy8KL3Vzci9zaGFyZS9tZXRhaW5mby8KL3Vzci9zaGFyZS9pY29ucy8KL3Vzci9zaGFyZS9sb2NhbGUvKi9MQ19NRVNTQUdFUy8le25hbWV9Lm1vCg==" | base64 -d | sed "s/VERSIONPLACEHOLDER/$VER/" > ~/rpmbuild/SPECS/${PKG}.spec
 
-%description
-VSDView is a read-only viewer for Microsoft Visio files (.vsdx and .vsd).
-
-%prep
-%setup -q
-
-%install
-PYNAME="vsdview"
-mkdir -p %{buildroot}/usr/lib/python3/dist-packages/$PYNAME
-if [ -d "src/$PYNAME" ]; then
-  cp -r src/$PYNAME/* %{buildroot}/usr/lib/python3/dist-packages/$PYNAME/
-elif [ -d "$PYNAME" ]; then
-  cp -r $PYNAME/* %{buildroot}/usr/lib/python3/dist-packages/$PYNAME/
-fi
-
-mkdir -p %{buildroot}/usr/bin
-cat > %{buildroot}/usr/bin/%{name} << 'LAUNCHER'
-#!/usr/bin/python3
-import sys
-from vsdview.__main__ import main
-sys.exit(main())
-LAUNCHER
-chmod 755 %{buildroot}/usr/bin/%{name}
-
-mkdir -p %{buildroot}/usr/share/applications
-mkdir -p %{buildroot}/usr/share/metainfo
-mkdir -p %{buildroot}/usr/share/icons/hicolor/scalable/apps
-for f in data/*.desktop *.desktop; do
-  [ -f "$f" ] && install -m 644 "$f" %{buildroot}/usr/share/applications/
-done
-for f in data/*.metainfo.xml *.metainfo.xml; do
-  [ -f "$f" ] && install -m 644 "$f" %{buildroot}/usr/share/metainfo/
-done
-find data/icons -name "*.svg" -print0 2>/dev/null | xargs -0 -I{} install -m 644 {} %{buildroot}/usr/share/icons/hicolor/scalable/apps/ 2>/dev/null || true
-
-for po in po/*.po; do
-  [ -f "$po" ] || continue
-  lang=$(basename "$po" .po)
-  mkdir -p %{buildroot}/usr/share/locale/$lang/LC_MESSAGES
-  msgfmt -o %{buildroot}/usr/share/locale/$lang/LC_MESSAGES/%{name}.mo "$po"
-done
-
-%files
-/usr/bin/%{name}
-/usr/lib/python3/dist-packages/vsdview/
-/usr/share/applications/
-/usr/share/metainfo/
-/usr/share/icons/
-/usr/share/locale/*/LC_MESSAGES/%{name}.mo
-SPECEOF
-
-          sed -i "s/VERSIONPLACEHOLDER/$VER/" ~/rpmbuild/SPECS/${PKG}.spec
           rpmbuild -bb ~/rpmbuild/SPECS/${PKG}.spec
           cp ~/rpmbuild/RPMS/noarch/*.rpm .
 
@@ -115,17 +49,17 @@ SPECEOF
     needs: build-rpm
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download RPM artifact
         uses: actions/download-artifact@v4
         with:
           name: rpm-package
 
-      - name: Get version from RPM filename
+      - name: Get version
         id: version
         run: |
-          RPM=$(ls *.rpm | head -1)
-          echo "rpm=$RPM" >> $GITHUB_OUTPUT
-          VER=$(echo "$RPM" | grep -oP '\d+\.\d+\.\d+')
+          VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "version=$VER" >> $GITHUB_OUTPUT
 
       - name: Upload RPM to release
@@ -133,6 +67,6 @@ SPECEOF
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VER="${{ steps.version.outputs.version }}"
-          RPM="${{ steps.version.outputs.rpm }}"
+          RPM=$(ls *.rpm | head -1)
           gh release upload "v${VER}" "$RPM" --repo ${{ github.repository }} --clobber 2>/dev/null || \
           gh release upload "${{ github.ref_name }}" "$RPM" --repo ${{ github.repository }} --clobber 2>/dev/null || true
