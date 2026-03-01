@@ -7,6 +7,10 @@ Files: *
 Copyright: 2026 Daniel Nylander <daniel@danielnylander.se>
 License: GPL-3.0+
 
+Files: data/*.metainfo.xml
+Copyright: 2026 Daniel Nylander <daniel@danielnylander.se>
+License: CC0-1.0
+
 License: GPL-3.0+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -20,3 +24,7 @@ License: GPL-3.0+
  .
  On Debian systems, the complete text of the GNU General Public
  License can be found in /usr/share/common-licenses/GPL-3.
+
+License: CC0-1.0
+ On Debian systems, the complete text of the CC0 license can be
+ found in /usr/share/common-licenses/CC0-1.0.

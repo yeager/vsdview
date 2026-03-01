@@ -2,15 +2,31 @@ Source: vsdview
 Section: graphics
 Priority: optional
 Maintainer: Daniel Nylander <daniel@danielnylander.se>
-Build-Depends: debhelper-compat (= 13), python3, gettext
-Standards-Version: 4.6.2
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               python3-all,
+               python3-setuptools,
+               gettext
+Standards-Version: 4.7.0
 Homepage: https://github.com/yeager/vsdview
+Vcs-Git: https://github.com/yeager/vsdview.git
+Vcs-Browser: https://github.com/yeager/vsdview
 
 Package: vsdview
 Architecture: all
-Depends: python3 (>= 3.10), python3-gi, libvisio-ng (>= 0.6.0), gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-rsvg-2.0, ${misc:Depends}
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         python3-gi,
+         python3-libvisio-ng (>= 0.5.0),
+         gir1.2-gtk-4.0,
+         gir1.2-adw-1,
+         gir1.2-rsvg-2.0
 Recommends: librsvg2-bin
 Description: Read-only viewer for Microsoft Visio files
  VSDView is a read-only viewer for Microsoft Visio files (.vsdx and .vsd),
- built with GTK4 and libadwaita. Uses libvisio-ng for native Visio file
- parsing — no external dependencies needed.
+ built with GTK4 and libadwaita. It uses libvisio-ng for native Visio file
+ parsing with support for both modern XML and legacy binary formats.
+ .
+ Features include interactive zoom, pan/drag navigation, shape info panel,
+ shape tree sidebar, measurement tool, minimap, SVG export, layer
+ visibility toggles, clickable hyperlinks, and search.

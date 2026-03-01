@@ -1,13 +1,5 @@
-vsdview (0.5.0-1) unstable; urgency=low
+vsdview (0.5.0-1) unstable; urgency=medium
 
-  * Major feature release: interactive zoom, pan/drag, shape info panel,
-    shape tree sidebar, measurement tool, minimap, SVG export, layer
-    visibility, clickable hyperlinks, search improvements, keyboard shortcuts
+  * Initial release. (Closes: #1129371)
 
- -- Daniel Nylander <daniel@danielnylander.se>  Sat, 01 Mar 2026 07:30:00 +0100
-
-vsdview (0.4.0-1) unstable; urgency=low
-
-  * Rendering quality overhaul: fix geometry, connectors, themes, text
-
- -- Daniel Nylander <daniel@danielnylander.se>  Wed, 19 Feb 2026 12:00:00 +0100
+ -- Daniel Nylander <daniel@danielnylander.se>  Sun, 01 Mar 2026 18:00:00 +0100
