@@ -5,3 +5,4 @@ debian/files
 debian/vsdview/
 debian/vsdview.substvars
 *.mo
+build/\ndist/\n*.egg-info/
