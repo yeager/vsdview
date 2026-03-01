@@ -12,6 +12,7 @@ Requires:       python3-gobject
 Requires:       gtk4
 Requires:       libadwaita
 Requires:       librsvg2
+Requires:       libvisio-ng >= 0.6.0
 Recommends:     librsvg2-tools
 
 %description
