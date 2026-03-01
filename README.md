@@ -4,6 +4,8 @@ Read-only viewer for Microsoft Visio files (.vsdx/.vsd) with built-in renderer.
 
 Built with GTK4/Adwaita. Part of the [Danne L10n Suite](https://github.com/yeager/debian-repo).
 
+Uses [libvisio-ng](https://github.com/yeager/libvisio-ng) for Visio file parsing — handles both .vsdx and .vsd formats natively in Python. No external dependencies needed.
+
 ## Features
 
 - **Multi-page viewing** — Tab bar for multi-page Visio documents, Ctrl+PageUp/PageDown navigation
