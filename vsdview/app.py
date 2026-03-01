@@ -76,21 +76,23 @@ class VSDViewApplication(Adw.Application):
         self._setup_actions()
 
     def _setup_actions(self):
+        # --- File ---
         open_action = Gio.SimpleAction.new("open", None)
         open_action.connect("activate", self._on_open)
         self.add_action(open_action)
         self.set_accels_for_action("app.open", ["<Control>o"])
 
-        about_action = Gio.SimpleAction.new("about", None)
-        about_action.connect("activate", self._on_about)
-        self.add_action(about_action)
+        close_action = Gio.SimpleAction.new("close", None)
+        close_action.connect("activate", self._on_close)
+        self.add_action(close_action)
+        self.set_accels_for_action("app.close", ["<Control>w"])
 
         quit_action = Gio.SimpleAction.new("quit", None)
         quit_action.connect("activate", lambda *_: self.quit())
         self.add_action(quit_action)
         self.set_accels_for_action("app.quit", ["<Control>q"])
 
-        # Zoom actions
+        # --- Zoom ---
         zoom_in = Gio.SimpleAction.new("zoom-in", None)
         zoom_in.connect("activate", self._on_zoom_in)
         self.add_action(zoom_in)
@@ -106,49 +108,78 @@ class VSDViewApplication(Adw.Application):
         self.add_action(zoom_fit)
         self.set_accels_for_action("app.zoom-fit", ["<Control>0"])
 
-        # Refresh
+        # --- Refresh ---
         refresh_action = Gio.SimpleAction.new("refresh", None)
         refresh_action.connect("activate", self._on_refresh)
         self.add_action(refresh_action)
         self.set_accels_for_action("app.refresh", ["F5"])
 
-        # Export PNG
-        export_action = Gio.SimpleAction.new("export-png", None)
-        export_action.connect("activate", self._on_export_png)
-        self.add_action(export_action)
+        # --- Fullscreen ---
+        fullscreen_action = Gio.SimpleAction.new("toggle-fullscreen", None)
+        fullscreen_action.connect("activate", self._on_toggle_fullscreen)
+        self.add_action(fullscreen_action)
+        self.set_accels_for_action("app.toggle-fullscreen", ["F11"])
+
+        # --- Export ---
+        export_png = Gio.SimpleAction.new("export-png", None)
+        export_png.connect("activate", self._on_export_png)
+        self.add_action(export_png)
         self.set_accels_for_action("app.export-png", ["<Control>e"])
 
-        # Export PDF
         export_pdf = Gio.SimpleAction.new("export-pdf", None)
         export_pdf.connect("activate", self._on_export_pdf)
         self.add_action(export_pdf)
         self.set_accels_for_action("app.export-pdf", ["<Control><Shift>p"])
 
-        # Export Text
+        export_svg = Gio.SimpleAction.new("export-svg", None)
+        export_svg.connect("activate", self._on_export_svg)
+        self.add_action(export_svg)
+        self.set_accels_for_action("app.export-svg", ["<Control><Shift>s"])
+
         export_text = Gio.SimpleAction.new("export-text", None)
         export_text.connect("activate", self._on_export_text)
         self.add_action(export_text)
         self.set_accels_for_action("app.export-text", ["<Control><Shift>e"])
 
-        # Search
+        export_all = Gio.SimpleAction.new("export-all", None)
+        export_all.connect("activate", self._on_export_all)
+        self.add_action(export_all)
+
+        # --- Search ---
         search_action = Gio.SimpleAction.new("search", None)
         search_action.connect("activate", self._on_search)
         self.add_action(search_action)
         self.set_accels_for_action("app.search", ["<Control>f"])
 
-        # Copy text
+        # --- Copy text ---
         copy_text = Gio.SimpleAction.new("copy-text", None)
         copy_text.connect("activate", self._on_copy_text)
         self.add_action(copy_text)
         self.set_accels_for_action("app.copy-text", ["<Control>c"])
 
-        # Shortcuts dialog
+        # --- Page navigation ---
+        page_next = Gio.SimpleAction.new("page-next", None)
+        page_next.connect("activate", self._on_page_next)
+        self.add_action(page_next)
+        self.set_accels_for_action("app.page-next", ["<Control>Page_Down"])
+
+        page_prev = Gio.SimpleAction.new("page-prev", None)
+        page_prev.connect("activate", self._on_page_prev)
+        self.add_action(page_prev)
+        self.set_accels_for_action("app.page-prev", ["<Control>Page_Up"])
+
+        # --- Shortcuts dialog ---
         shortcuts_action = Gio.SimpleAction.new("show-shortcuts", None)
         shortcuts_action.connect("activate", self._on_show_shortcuts)
         self.add_action(shortcuts_action)
-        self.set_accels_for_action("app.show-shortcuts", ["<Control>slash"])
+        self.set_accels_for_action("app.show-shortcuts", ["<Control>slash", "<Control>question"])
 
-        # Theme toggle
+        # --- About ---
+        about_action = Gio.SimpleAction.new("about", None)
+        about_action.connect("activate", self._on_about)
+        self.add_action(about_action)
+
+        # --- Theme toggle ---
         theme_action = Gio.SimpleAction.new_stateful(
             "toggle-theme",
             None,
@@ -157,6 +188,8 @@ class VSDViewApplication(Adw.Application):
         theme_action.connect("activate", self._on_toggle_theme)
         self.add_action(theme_action)
 
+    # --- Action handlers ---
+
     def _get_win(self):
         return self.props.active_window
 
@@ -164,6 +197,11 @@ class VSDViewApplication(Adw.Application):
         win = self._get_win()
         if win:
             win.show_open_dialog()
+
+    def _on_close(self, action, param):
+        win = self._get_win()
+        if win:
+            win.close()
 
     def _on_zoom_in(self, action, param):
         win = self._get_win()
@@ -185,6 +223,14 @@ class VSDViewApplication(Adw.Application):
         if win:
             win.refresh()
 
+    def _on_toggle_fullscreen(self, action, param):
+        win = self._get_win()
+        if win:
+            if win.is_fullscreen():
+                win.unfullscreen()
+            else:
+                win.fullscreen()
+
     def _on_export_png(self, action, param):
         win = self._get_win()
         if win:
@@ -195,10 +241,20 @@ class VSDViewApplication(Adw.Application):
         if win:
             win.export_pdf()
 
+    def _on_export_svg(self, action, param):
+        win = self._get_win()
+        if win:
+            win.export_svg()
+
     def _on_export_text(self, action, param):
         win = self._get_win()
         if win:
             win.export_text()
+
+    def _on_export_all(self, action, param):
+        win = self._get_win()
+        if win:
+            win.export_all_pages()
 
     def _on_search(self, action, param):
         win = self._get_win()
@@ -209,6 +265,16 @@ class VSDViewApplication(Adw.Application):
         win = self._get_win()
         if win:
             win.copy_text()
+
+    def _on_page_next(self, action, param):
+        win = self._get_win()
+        if win:
+            win.page_next()
+
+    def _on_page_prev(self, action, param):
+        win = self._get_win()
+        if win:
+            win.page_prev()
 
     def _on_show_shortcuts(self, action, param):
         win = self._get_win()
@@ -266,16 +332,25 @@ class VSDViewApplication(Adw.Application):
         ]
         return "\n".join(lines)
 
-
     def _show_welcome(self, win):
         dialog = Adw.Dialog()
         dialog.set_title(_("Welcome"))
         dialog.set_content_width(420)
-        dialog.set_content_height(480)
+        dialog.set_content_height(520)
         page = Adw.StatusPage()
         page.set_icon_name("x-office-drawing-symbolic")
         page.set_title(_("Welcome to VSDView"))
-        page.set_description(_("View Microsoft Visio files on Linux.\n\n✓ Open .vsd and .vsdx files\n✓ Multi-page tabs\n✓ Text search and copy\n✓ PDF export"))
+        page.set_description(_(
+            "View Microsoft Visio files on Linux.\n\n"
+            "✓ Open .vsd and .vsdx files\n"
+            "✓ Multi-page tabs\n"
+            "✓ Text search and copy\n"
+            "✓ PDF, PNG, SVG export\n"
+            "✓ Shape info panel\n"
+            "✓ Measurement tool\n"
+            "✓ Minimap navigation\n"
+            "✓ Drag & drop"
+        ))
         btn = Gtk.Button(label=_("Get Started"))
         btn.add_css_class("suggested-action")
         btn.add_css_class("pill")
@@ -315,6 +390,12 @@ SHORTCUTS_UI = """<?xml version="1.0" encoding="UTF-8"?>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Close window</property>
+                <property name="accelerator">&lt;Control&gt;w</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes">Quit</property>
                 <property name="accelerator">&lt;Control&gt;q</property>
               </object>
@@ -323,6 +404,12 @@ SHORTCUTS_UI = """<?xml version="1.0" encoding="UTF-8"?>
               <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes">Refresh</property>
                 <property name="accelerator">F5</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Fullscreen</property>
+                <property name="accelerator">F11</property>
               </object>
             </child>
             <child>
@@ -347,7 +434,7 @@ SHORTCUTS_UI = """<?xml version="1.0" encoding="UTF-8"?>
         </child>
         <child>
           <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes">Zoom</property>
+            <property name="title" translatable="yes">Zoom &amp; Navigation</property>
             <child>
               <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes">Zoom in</property>
@@ -366,6 +453,24 @@ SHORTCUTS_UI = """<?xml version="1.0" encoding="UTF-8"?>
                 <property name="accelerator">&lt;Control&gt;0</property>
               </object>
             </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Pan</property>
+                <property name="accelerator">Left Right Up Down</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Next page</property>
+                <property name="accelerator">&lt;Control&gt;Page_Down</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Previous page</property>
+                <property name="accelerator">&lt;Control&gt;Page_Up</property>
+              </object>
+            </child>
           </object>
         </child>
         <child>
@@ -381,6 +486,12 @@ SHORTCUTS_UI = """<?xml version="1.0" encoding="UTF-8"?>
               <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes">Export as PDF</property>
                 <property name="accelerator">&lt;Control&gt;&lt;Shift&gt;p</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Export as SVG</property>
+                <property name="accelerator">&lt;Control&gt;&lt;Shift&gt;s</property>
               </object>
             </child>
             <child>

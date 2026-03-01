@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+Major feature release with interactive viewing capabilities.
+
+### New features
+- **Interactive zoom** — Pinch-to-zoom on touchpad, +/- toolbar buttons, zoom slider with percentage display
+- **Pan/drag** — Click and drag with middle mouse button or Space+drag, arrow keys to pan
+- **Page navigation** — Ctrl+PageUp/PageDown to switch pages
+- **Text search improvements** — Navigate between results with Enter/Shift+Enter, search across all pages option
+- **Shape info panel** — Click a shape to see text, dimensions, position, properties, metadata in a side panel
+- **Shape tree sidebar** — Hierarchical tree view of all shapes/groups, click to select and highlight
+- **Measurement tool** — Toggle measurement mode, click two points to see distance in inches/mm
+- **Export as SVG** — Export current page as SVG (Ctrl+Shift+S)
+- **Export all pages** — Export all pages in PNG, PDF, and SVG at once
+- **Layer visibility panel** — Panel showing Visio layers with visibility toggles
+- **Minimap** — Overview of entire document in corner, shows viewport rectangle, click to navigate
+- **Clickable hyperlinks** — Shapes with hyperlinks show pointer cursor, click to open in browser
+- **Keyboard shortcuts** — F11 fullscreen, Ctrl+W close, Ctrl+PageUp/Down page navigation, arrow keys pan
+- **Close window** — Ctrl+W to close current window
+
 ## 0.4.0
 
 Rendering quality overhaul for the built-in .vsdx parser.
