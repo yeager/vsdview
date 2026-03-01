@@ -1,0 +1,67 @@
+name: Build Windows Installer
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-libadwaita
+            mingw-w64-x86_64-python-gobject
+            mingw-w64-x86_64-librsvg
+            mingw-w64-x86_64-python-pip
+            mingw-w64-x86_64-python3
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
+      - name: Build with PyInstaller
+        shell: msys2 {0}
+        run: |
+          pip install pyinstaller
+          pyinstaller --name VSDView \
+            --windowed \
+            --onedir \
+            --add-data "vsdview;vsdview" \
+            --add-data "po;po" \
+            --add-data "data;data" \
+            --hidden-import gi \
+            --hidden-import gi.repository.Gtk \
+            --hidden-import gi.repository.Adw \
+            --collect-all gi \
+            vsdview/__main__.py
+
+      - name: Create ZIP
+        shell: bash
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          cd dist
+          7z a "../VSDView-${VER}-win64.zip" VSDView/
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          gh release upload "v${VER}" "VSDView-${VER}-win64.zip" --clobber 2>/dev/null || \
+          gh release upload "${{ github.ref_name }}" "VSDView-${VER}-win64.zip" --clobber 2>/dev/null || true
