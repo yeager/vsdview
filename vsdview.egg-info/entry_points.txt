@@ -1,2 +1,0 @@
-[console_scripts]
-vsdview = vsdview.__main__:main
