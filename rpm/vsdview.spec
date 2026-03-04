@@ -1,5 +1,5 @@
 Name:           vsdview
-Version:        0.5.0
+Version:        0.6.0
 Release:        1%{?dist}
 Summary:        Read-only viewer for Microsoft Visio files
 License:        GPL-3.0-or-later
@@ -51,3 +51,8 @@ install -m 644 man/vsdview.1 %{buildroot}%{_mandir}/man1/ 2>/dev/null || true
 %changelog
 * Sat Mar 01 2026 Daniel Nylander <daniel@danielnylander.se> - 0.5.0-1
 - Major feature release: interactive zoom, pan, shape info, measurement, minimap, SVG export
+
+* Tue Mar 04 2026 Daniel Nylander <daniel@danielnylander.se> - 0.6.0-1
+- Replace built-in Visio parser with libvisio-ng
+- Remove 4000-line internal converter
+- Add libvisio-ng >= 0.6.0 dependency
