@@ -47,3 +47,10 @@ Daniel Nylander — [danielnylander.se](https://danielnylander.se)
 ## Screenshots
 
 ![vsdview](screenshots/vsdview.png)
+
+## Regression tests
+
+With the GTK4, libadwaita, librsvg and Python GI dependencies installed, install
+`pytest` and `libvisio-ng`, then run `python3 -m pytest tests -q` from the repository.
+The tests exercise opening, replacing, failing to open and closing documents
+without constructing a graphical window.

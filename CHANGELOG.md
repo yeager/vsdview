@@ -1,3 +1,14 @@
+# 0.6.1 — 2026-09-17
+
+- Remove temporary SVG files on document replacement, failed opening and window close.
+- Read metadata and validate the first SVG before replacing the current document.
+- Report file I/O and SVG-loading failures through the existing error UI.
+- Add document-lifecycle regression tests.
+
+- Include libvisio-ng in Windows builds and surface release upload failures.
+
+Validation: five tests with real librsvg parsing and stubbed window callbacks. Full interactive GUI behavior and Windows packaging require platform testing.
+
 # Changelog
 
 ## 0.5.0

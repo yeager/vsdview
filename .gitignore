@@ -5,4 +5,9 @@ debian/files
 debian/vsdview/
 debian/vsdview.substvars
 *.mo
-build/\ndist/\n*.egg-info/
+build/
+dist/
+*.egg-info/
+
+.pytest_cache/
+.venv/

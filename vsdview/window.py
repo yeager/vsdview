@@ -101,6 +101,8 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._current_file = None
         self._zoom_level = 1.0
         self._svg_dir = None
+        self._svg_tempdir = None
+        self.connect("close-request", self._on_close_request)
         self._svg_files = []
         self._current_page = 0
         self._page_info = []
@@ -724,20 +726,29 @@ class VSDViewWindow(Adw.ApplicationWindow):
         except Exception:
             pass
 
+    def _on_close_request(self, *_args):
+        if self._svg_tempdir is not None:
+            self._svg_tempdir.cleanup()
+            self._svg_tempdir = None
+        return False
+
     def open_file(self, path):
-        tmpdir = tempfile.mkdtemp(prefix="vsdview_")
+        tempdir = tempfile.TemporaryDirectory(prefix="vsdview_")
         try:
-            svg_files = convert_vsd_to_svg(path, tmpdir)
-        except RuntimeError as e:
+            svg_files = convert_vsd_to_svg(path, tempdir.name)
+            if not svg_files:
+                raise RuntimeError(_("No SVG output produced."))
+            page_info = get_page_info(path)
+            first_handle = Rsvg.Handle.new_from_file(svg_files[0])
+        except (RuntimeError, OSError, ValueError, GLib.Error) as e:
+            tempdir.cleanup()
             self._send_notification(_("Conversion failed"), str(e))
             self._show_error(str(e))
             return
 
-        if not svg_files:
-            self._show_error(_("No SVG output produced."))
-            return
-
-        self._svg_dir = tmpdir
+        previous_tempdir = self._svg_tempdir
+        self._svg_tempdir = tempdir
+        self._svg_dir = tempdir.name
         self._svg_files = svg_files
         self._current_file = path
         self._current_page = 0
@@ -747,8 +758,10 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._measure_point1 = None
         self._measure_point2 = None
 
-        self._page_info = get_page_info(path)
-        self._load_page(0)
+        self._page_info = page_info
+        self._load_page(0, first_handle)
+        if previous_tempdir is not None:
+            previous_tempdir.cleanup()
         self._setup_page_tabs()
         self._update_shape_tree()
         self._update_layers()
@@ -761,11 +774,11 @@ class VSDViewWindow(Adw.ApplicationWindow):
             app.recent.add_file(path)
             self._update_recent_menu()
 
-    def _load_page(self, page_index: int):
+    def _load_page(self, page_index: int, handle=None):
         if page_index < 0 or page_index >= len(self._svg_files):
             return
         self._current_page = page_index
-        self._svg_handle = Rsvg.Handle.new_from_file(self._svg_files[page_index])
+        self._svg_handle = handle if handle is not None else Rsvg.Handle.new_from_file(self._svg_files[page_index])
         self._selected_shape = None
         self._update_shape_bboxes()
         self._update_shape_tree()
