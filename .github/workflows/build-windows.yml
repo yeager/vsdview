@@ -40,10 +40,10 @@ jobs:
           pip install pyinstaller libvisio-ng
           runtime_args=()
           for dll in /mingw64/bin/*.dll; do
-            # MSYS2 also exposes dangling import-library links (for example
-            # edit.dll). PyInstaller rejects those, while real runtime DLLs
-            # are regular files or resolvable links.
-            [[ -f "$dll" ]] && runtime_args+=(--add-binary "${dll};.")
+            # Use an absolute Windows path. Passing an MSYS2 path directly to
+            # a native PyInstaller executable rewrites /mingw64 as D:/mingw64
+            # instead of the runner's actual MSYS2 installation directory.
+            [[ -f "$dll" ]] && runtime_args+=(--add-binary "$(cygpath -w "$dll");.")
           done
           pyinstaller "${runtime_args[@]}" \
             --name VSDView \
@@ -52,8 +52,8 @@ jobs:
             --add-data "vsdview;vsdview" \
             --add-data "po;po" \
             --add-data "data;data" \
-            --add-data "/mingw64/lib/girepository-1.0;lib/girepository-1.0" \
-            --add-data "/mingw64/share/glib-2.0/schemas;share/glib-2.0/schemas" \
+            --add-data "$(cygpath -w /mingw64/lib/girepository-1.0);lib/girepository-1.0" \
+            --add-data "$(cygpath -w /mingw64/share/glib-2.0/schemas);share/glib-2.0/schemas" \
             --hidden-import gi \
             --hidden-import gi.repository.Gtk \
             --hidden-import gi.repository.Adw \
