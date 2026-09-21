@@ -40,7 +40,10 @@ jobs:
           pip install pyinstaller libvisio-ng
           runtime_args=()
           for dll in /mingw64/bin/*.dll; do
-            runtime_args+=(--add-binary "${dll};.")
+            # MSYS2 also exposes dangling import-library links (for example
+            # edit.dll). PyInstaller rejects those, while real runtime DLLs
+            # are regular files or resolvable links.
+            [[ -f "$dll" ]] && runtime_args+=(--add-binary "${dll};.")
           done
           pyinstaller "${runtime_args[@]}" \
             --name VSDView \
