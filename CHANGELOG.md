@@ -1,3 +1,7 @@
+# 0.6.3 — 2026-11-19
+
+- Keep existing files during bulk export, give each page a distinct filename, and render layer visibility separately for each page.
+
 # 0.6.1 — 2026-09-17
 
 - Remove temporary SVG files on document replacement, failed opening and window close.

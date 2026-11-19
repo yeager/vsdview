@@ -37,7 +37,7 @@ jobs:
       - name: Build with PyInstaller
         shell: msys2 {0}
         run: |
-          pip install pyinstaller libvisio-ng
+          pip install pyinstaller https://github.com/yeager/libvisio-ng/releases/download/v0.7.2/libvisio_ng-0.7.2-py3-none-any.whl
           runtime_args=()
           for dll in /mingw64/bin/*.dll; do
             # Use an absolute Windows path. Passing an MSYS2 path directly to

@@ -4,6 +4,7 @@ import gettext
 import json as _json
 import math
 import os
+import shutil
 import tempfile
 import webbrowser
 import importlib.util
@@ -130,7 +131,7 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._search_result_idx = -1
 
         # Layers
-        self._layers = {}  # {layer_id: {"name": str, "visible": bool}}
+        self._layer_visibility = {}  # page index -> layer ID -> visibility
 
         # Build UI
         self._build_ui()
@@ -759,12 +760,11 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._measure_point2 = None
 
         self._page_info = page_info
+        self._layer_visibility = {}
         self._load_page(0, first_handle)
         if previous_tempdir is not None:
             previous_tempdir.cleanup()
         self._setup_page_tabs()
-        self._update_shape_tree()
-        self._update_layers()
 
         self.set_title(f"VSDView — {os.path.basename(path)}")
         self._update_status()
@@ -782,6 +782,7 @@ class VSDViewWindow(Adw.ApplicationWindow):
         self._selected_shape = None
         self._update_shape_bboxes()
         self._update_shape_tree()
+        self._update_layers()
         self._update_status()
         self._drawing_area.queue_draw()
         self._minimap.queue_draw()
@@ -969,30 +970,35 @@ class VSDViewWindow(Adw.ApplicationWindow):
         except Exception:
             return
 
-        import shutil
+        if not output_dir:
+            self._show_error(_("Choose a local folder for export."))
+            return
+
         basename = os.path.splitext(os.path.basename(self._current_file))[0]
+        errors = []
         for i, svg_path in enumerate(self._svg_files):
-            page_name = f"page{i+1}"
-            if i < len(self._page_info):
-                pn = self._page_info[i].get("name", "")
-                if pn:
-                    # Sanitize filename
-                    page_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in pn)
-            # Export SVG
-            out_svg = os.path.join(output_dir, f"{basename}_{page_name}.svg")
-            shutil.copy2(svg_path, out_svg)
-            # Export PNG
-            out_png = os.path.join(output_dir, f"{basename}_{page_name}.png")
-            try:
-                export_to_png(svg_path, out_png)
-            except Exception:
-                pass
-            # Export PDF
-            out_pdf = os.path.join(output_dir, f"{basename}_{page_name}.pdf")
-            try:
-                export_to_pdf(svg_path, out_pdf)
-            except Exception:
-                pass
+            page_name = self._page_info[i].get("name", "") if i < len(self._page_info) else ""
+            page_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in page_name)
+            stem = f"{basename}_page{i + 1}"
+            if page_name:
+                stem += f"_{page_name}"
+            for extension, export in (("svg", shutil.copyfile), ("png", export_to_png), ("pdf", export_to_pdf)):
+                target = os.path.join(output_dir, f"{stem}.{extension}")
+                try:
+                    with tempfile.TemporaryDirectory(prefix=".vsdview-", dir=output_dir) as staging:
+                        staged = os.path.join(staging, f"page.{extension}")
+                        export(svg_path, staged)
+                        # Publish only a complete file, without replacing an existing path.
+                        with open(staged, "rb") as source, open(target, "xb") as destination:
+                            try:
+                                shutil.copyfileobj(source, destination)
+                            except OSError:
+                                os.unlink(target)
+                                raise
+                except (OSError, RuntimeError) as exc:
+                    errors.append(f"{os.path.basename(target)}: {exc}")
+        if errors:
+            self._show_error(_("Some pages could not be exported:") + "\n" + "\n".join(errors))
 
     # =====================================================================
     # Zoom
@@ -1444,23 +1450,19 @@ class VSDViewWindow(Adw.ApplicationWindow):
             self._layers_box.remove(child)
             child = next_child
 
-        # Parse layers from the page_info if available
-        # For now, extract unique LayerMember values from shapes
-        if not self._page_info or self._current_page >= len(self._page_info):
-            lbl = Gtk.Label(label=_("No layers"))
-            self._layers_box.append(lbl)
-            return
+        page = self._page_info[self._current_page] if self._current_page < len(self._page_info) else {}
+        layer_names = dict(page.get("layers", {}))
 
-        layer_names = {}
-        for shape in self._page_info[self._current_page].get("shapes", []):
-            cells = shape.get("cells", {})
-            lm = cells.get("LayerMember", {}).get("V", "")
-            if lm:
-                for lid in lm.split(";"):
-                    lid = lid.strip()
-                    if lid and lid not in layer_names:
-                        layer_names[lid] = f"Layer {lid}"
+        def add_layers(shapes):
+            for shape in shapes:
+                membership = shape.get("cells", {}).get("LayerMember", {}).get("V", "")
+                for layer_id in membership.split(";"):
+                    layer_id = layer_id.strip()
+                    if layer_id:
+                        layer_names.setdefault(layer_id, {"name": _("Layer %s") % layer_id, "visible": True})
+                add_layers(shape.get("sub_shapes", []))
 
+        add_layers(page.get("shapes", []))
         if not layer_names:
             lbl = Gtk.Label(label=_("No layers"))
             self._layers_box.append(lbl)
@@ -1470,16 +1472,39 @@ class VSDViewWindow(Adw.ApplicationWindow):
         title.add_css_class("title-4")
         self._layers_box.append(title)
 
-        for lid, name in sorted(layer_names.items()):
-            cb = Gtk.CheckButton(label=name)
-            cb.set_active(True)
-            cb.connect("toggled", self._on_layer_toggled, lid)
+        visibility = self._layer_visibility.get(self._current_page, {})
+        for layer_id, layer in sorted(layer_names.items()):
+            cb = Gtk.CheckButton(label=layer["name"])
+            cb.set_active(visibility.get(layer_id, layer["visible"]))
+            cb.connect("toggled", self._on_layer_toggled, layer_id)
             self._layers_box.append(cb)
 
     def _on_layer_toggled(self, checkbutton, layer_id):
-        # Layer visibility toggling would require re-rendering with layer info
-        # For now, this is a placeholder that shows the UI
-        pass
+        page = self._current_page
+        visible = checkbutton.get_active()
+        visibility = {**self._layer_visibility.get(page, {}), layer_id: visible}
+        staging = None
+        try:
+            staging = tempfile.mkdtemp(prefix="layers-", dir=self._svg_dir)
+            svg = convert_vsd_page_to_svg(
+                self._current_file, page, staging, layer_visibility=visibility)
+            if not svg:
+                raise RuntimeError(_("Could not render the selected layers."))
+            handle = Rsvg.Handle.new_from_file(svg)
+        except (RuntimeError, OSError, ValueError, GLib.Error) as exc:
+            if staging:
+                shutil.rmtree(staging, ignore_errors=True)
+            checkbutton.handler_block_by_func(self._on_layer_toggled)
+            checkbutton.set_active(not visible)
+            checkbutton.handler_unblock_by_func(self._on_layer_toggled)
+            self._show_error(str(exc))
+            return
+        previous_directory = os.path.dirname(self._svg_files[page])
+        self._svg_files[page] = svg
+        if previous_directory != self._svg_dir:
+            shutil.rmtree(previous_directory, ignore_errors=True)
+        self._layer_visibility[page] = visibility
+        self._load_page(page, handle)
 
     # =====================================================================
     # Measurement tool

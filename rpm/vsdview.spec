@@ -1,5 +1,5 @@
 Name:           vsdview
-Version:        0.6.0
+Version:        0.6.3
 Release:        1%{?dist}
 Summary:        Read-only viewer for Microsoft Visio files
 License:        GPL-3.0-or-later
@@ -12,7 +12,7 @@ Requires:       python3-gobject
 Requires:       gtk4
 Requires:       libadwaita
 Requires:       librsvg2
-Requires:       libvisio-ng >= 0.6.0
+Requires:       libvisio-ng >= 0.7.2
 Recommends:     librsvg2-tools
 
 %description
@@ -55,4 +55,4 @@ install -m 644 man/vsdview.1 %{buildroot}%{_mandir}/man1/ 2>/dev/null || true
 * Tue Mar 04 2026 Daniel Nylander <daniel@danielnylander.se> - 0.6.0-1
 - Replace built-in Visio parser with libvisio-ng
 - Remove 4000-line internal converter
-- Add libvisio-ng >= 0.6.0 dependency
+- Add libvisio-ng >= 0.7.2 dependency

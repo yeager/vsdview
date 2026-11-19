@@ -61,3 +61,29 @@ def test_failed_open_cleans_temp_files_and_preserves_document(monkeypatch, failu
     assert obj._current_file == 'previous.vsdx'
     obj._load_page.assert_not_called()
     obj._show_error.assert_called_once()
+
+
+def test_export_preserves_existing_file_and_duplicate_page_names(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    output = tmp_path / "output"
+    output.mkdir()
+    pages = [source / "first.svg", source / "second.svg"]
+    for number, page in enumerate(pages, 1):
+        page.write_text(str(number))
+    existing = output / "diagram_page1_Plan_A.svg"
+    existing.write_text("keep")
+    window_obj = SimpleNamespace(
+        _current_file="diagram.vsdx", _svg_files=pages,
+        _page_info=[{"name": "Plan/A"}, {"name": "Plan_A"}], _show_error=Mock(),
+    )
+    dialog = SimpleNamespace(select_folder_finish=lambda _: SimpleNamespace(get_path=lambda: str(output)))
+    def write_export(source_path, output_path):
+        Path(output_path).write_text(Path(source_path).read_text())
+    monkeypatch.setattr(window, "export_to_png", write_export)
+    monkeypatch.setattr(window, "export_to_pdf", write_export)
+    window.VSDViewWindow._on_export_all_folder_chosen(window_obj, dialog, None)
+    assert existing.read_text() == "keep"
+    assert (output / "diagram_page2_Plan_A.svg").read_text() == "2"
+    assert (output / "diagram_page1_Plan_A.png").read_text() == "1"
+    window_obj._show_error.assert_called_once()

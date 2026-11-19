@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vsdview"
-version = "0.6.2"
+version = "0.6.3"
 description = "A read-only viewer for Microsoft Visio files (.vsdx/.vsd)"
 license = "GPL-3.0-or-later"
 authors = [
@@ -13,7 +13,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "PyGObject>=3.42",
-    "libvisio-ng>=0.6.0",
+    "libvisio-ng>=0.7.2",
 ]
 
 [project.scripts]
