@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to build
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,47 +18,52 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
-            mingw-w64-x86_64-gtk4
-            mingw-w64-x86_64-libadwaita
-            mingw-w64-x86_64-python-gobject
-            mingw-w64-x86_64-librsvg
-            mingw-w64-x86_64-python-pip
-            mingw-w64-x86_64-python3
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-python-gobject
+            mingw-w64-ucrt-x86_64-librsvg
+            mingw-w64-ucrt-x86_64-python-pip
+            mingw-w64-ucrt-x86_64-python
 
       - name: Get version
         id: version
-        shell: bash
+        shell: msys2 {0}
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
         run: |
           VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          echo "version=$VER" >> $GITHUB_OUTPUT
+          test "$RELEASE_TAG" = "v$VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Build with PyInstaller
         shell: msys2 {0}
         run: |
-          pip install pyinstaller https://github.com/yeager/libvisio-ng/releases/download/v0.7.2/libvisio_ng-0.7.2-py3-none-any.whl
+          python -m pip install --break-system-packages pyinstaller https://github.com/yeager/libvisio-ng/releases/download/v0.7.2/libvisio_ng-0.7.2-py3-none-any.whl
           runtime_args=()
-          for dll in /mingw64/bin/*.dll; do
+          for dll in /ucrt64/bin/*.dll; do
             # Use an absolute Windows path. Passing an MSYS2 path directly to
-            # a native PyInstaller executable rewrites /mingw64 as D:/mingw64
+            # a native PyInstaller executable rewrites /ucrt64 as D:/ucrt64
             # instead of the runner's actual MSYS2 installation directory.
             [[ -f "$dll" ]] && runtime_args+=(--add-binary "$(cygpath -w "$dll");.")
           done
-          pyinstaller "${runtime_args[@]}" \
+          python -m PyInstaller "${runtime_args[@]}" \
             --name VSDView \
             --windowed \
             --onedir \
             --add-data "vsdview;vsdview" \
             --add-data "po;po" \
             --add-data "data;data" \
-            --add-data "$(cygpath -w /mingw64/lib/girepository-1.0);lib/girepository-1.0" \
-            --add-data "$(cygpath -w /mingw64/share/glib-2.0/schemas);share/glib-2.0/schemas" \
+            --add-data "$(cygpath -w /ucrt64/lib/girepository-1.0);lib/girepository-1.0" \
+            --add-data "$(cygpath -w /ucrt64/share/glib-2.0/schemas);share/glib-2.0/schemas" \
             --hidden-import gi \
             --hidden-import gi.repository.Gtk \
             --hidden-import gi.repository.Adw \
